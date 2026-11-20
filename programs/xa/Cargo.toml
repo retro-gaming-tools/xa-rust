@@ -1,0 +1,8 @@
+[package]
+name = "extreme-assault-code-xa"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+recomp-runtime = { path = "../../runtime" }
+extreme-assault-code-xa_3dfx_1_1 = { path = "../xa_3dfx_1_1" }

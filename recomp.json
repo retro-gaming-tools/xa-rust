@@ -1,0 +1,59 @@
+{
+  "name": "extreme-assault",
+  "title": "Extreme Assault Rust",
+  "needs": "Extreme Assault by Blue Byte: the English CD (version E 1.1.0), the German CD (R 1.0.1), or a copy patched to version 1.23",
+  "recompVersion": "0.5-beta",
+  "recompRepo": "retro-gaming-tools/xa-rust",
+  "recompCommand": "XA_3DFX.EXE",
+  "recompSwitches": {
+    "forbid16bitcolor": "- advanced: Only 256-colour modes",
+    "forbidhires": "- advanced: Only low resolutions",
+    "forbidautoalloc": "- advanced: Fixed texture memory"
+  },
+  "recompRenderers": [
+    "XA_3DFX.EXE Glide",
+    "XA.EXE Software"
+  ],
+  "recompCd": "EXTREME",
+  "recompInstall": [
+    "EXTREME/ROOT",
+    "EXTREME"
+  ],
+  "recompCdTracks": [
+    "00:00:00",
+    "17:12:66",
+    "20:22:07",
+    "23:13:07",
+    "25:34:62",
+    "28:47:08",
+    "31:47:37",
+    "34:43:68",
+    "37:44:05",
+    "41:23:48",
+    "45:45:06",
+    "49:28:28",
+    "53:01:02",
+    "54:52:42",
+    "56:30:39",
+    "56:42:01",
+    "58:36:08",
+    "58:48:50",
+    "62:21:02",
+    "62:40:47",
+    "65:55:64"
+  ],
+  "recompFiles": {
+    "XA_3DFX.EXE": "c24019dfd7641911cc090f58d0cd663772394d44cd770be4e5bed8969cc7e67b",
+    "XA_3DFX.EXE@1.1": "7abb3557fa36c5425e6b6f5cf2d630609e3c4edce229cd20d84bd5bb7aa224bb",
+    "XA.EXE": "952c865f2fcbb0abf1f7ecdb3f9e0433f0db837cf92381c3e97bd5395eeb35fb",
+    "XA.EXE@1.1": "746bb06b1a1ac1e7ea15a1b64ccdb469048ecfd6084d6cec810a25c139519a7c",
+    "XA.EXE@de": "e69a049251c8ade591adb5e5ee02fed8b05d3313ba86ab4e6cd02408fbefd725"
+  },
+  "recompVersionNames": {
+    "XA_3DFX.EXE": "version 1.23 (patched)",
+    "XA_3DFX.EXE@1.1": "English CD 1.1.0",
+    "XA.EXE": "version 1.22 (patched)",
+    "XA.EXE@1.1": "English CD 1.1.0",
+    "XA.EXE@de": "German CD 1.0.1"
+  }
+}

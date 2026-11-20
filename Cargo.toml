@@ -1,0 +1,21 @@
+[package]
+name = "extreme-assault-rust"
+version = "0.5.0-beta"
+edition = "2021"
+
+[dependencies]
+recomp-runtime = { path = "runtime" }
+extreme-assault-code-xa_3dfx = { path = "programs/xa_3dfx" }
+extreme-assault-code-xa_3dfx_1_1 = { path = "programs/xa_3dfx_1_1" }
+extreme-assault-code-xa = { path = "programs/xa" }
+extreme-assault-code-xa_1_1 = { path = "programs/xa_1_1" }
+extreme-assault-code-xa_de = { path = "programs/xa_de" }
+
+[profile.release]
+opt-level = 2
+codegen-units = 256
+debug = false
+panic = "unwind"
+
+[profile.release.package.recomp-runtime]
+opt-level = 3
