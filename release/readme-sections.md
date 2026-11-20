@@ -1,3 +1,26 @@
+## The launcher
+
+![The launcher](release/launcher.png)
+
+The launcher opens before the game. Your choices are saved in `settings.ini` beside the program (beside the `.AppImage` file on Linux), and `--play` on the command line skips the launcher.
+
+- **Game files**: where your copy of the game is. Click *Choose folder...* or press Enter to pick a folder, or drop a folder or disc image onto the window. The line below it says which version was found, or what's missing.
+- **Choose a disc image or game file**: pick a disc image or any file of the game.
+- **3D resolution**: the size the Glide renderer draws the 3D view at, from the original 640 x 480 upwards. With the Software renderer it's greyed out.
+- **Display**: *Window* or *Fullscreen*.
+- **Renderer**: *Glide* (`XA_3DFX.EXE`, drawn by the port) or *Software* (`XA.EXE`, the game's own renderer). Renderers the chosen copy doesn't have are skipped, such as Glide on the German disc.
+- **Advanced settings...** opens a second page, described below.
+- **Start game** and **Quit**.
+
+### Advanced settings
+
+The defaults suit most machines. *Back* or Escape returns to the first page.
+
+- **3D drawn by**: *GPU (OpenGL)* (the default) or *CPU*, for Glide.
+- **Only 256-colour modes**, **Only low resolutions** and **Fixed texture memory**: the original's start-up options, described under *Supported versions*. Off by default.
+
+The launcher works with the mouse, the keyboard (arrow keys to choose and change, Enter to confirm, Escape to quit) and a controller (d-pad to choose and change, A to confirm, Start to start the game, B to quit).
+
 ## Supported versions
 
 The game came as two programs: `XA_3DFX.EXE` for 3Dfx (Glide) cards and `XA.EXE`, the software renderer. The port carries both, checks the one it starts by SHA-256, and lets you choose in the launcher (*Renderer*: Glide or Software). It supports:

@@ -20,7 +20,7 @@ static TABLES: &[&[(u32, GuestFn)]] = &[
 ];
 
 static GAME: loader::Game = loader::Game {
-    title: "Extreme Assault Rust",
+    title: "Extreme Assault",
     version: include_str!("../VERSION").trim_ascii(),
     needs: "Extreme Assault by Blue Byte: the English CD (version E 1.1.0), the German CD (R 1.0.1), or a copy patched to version 1.23",
     command: "XA_3DFX.EXE",

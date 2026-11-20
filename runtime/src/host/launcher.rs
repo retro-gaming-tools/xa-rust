@@ -240,6 +240,11 @@ struct Sdl {
     delay: unsafe extern "C" fn(u32),
     destroy_renderer: unsafe extern "C" fn(Pointer),
     destroy_window: unsafe extern "C" fn(Pointer),
+    /// For the `launcher:NAME` script step: the drawn screen as a surface,
+    /// turned into RGB.
+    read_pixels: unsafe extern "C" fn(Pointer, *const c_void) -> Pointer,
+    convert_surface: unsafe extern "C" fn(Pointer, u32) -> Pointer,
+    destroy_surface: unsafe extern "C" fn(Pointer),
 }
 
 impl Sdl {
@@ -255,7 +260,7 @@ impl Sdl {
             }
             init(INIT_GAMEPAD);
             let create_window: unsafe extern "C" fn(*const c_char, c_int, c_int, u64) -> Pointer = symbol(library, "SDL_CreateWindow");
-            let title = CString::new(format!("{} {} - Launcher", game.title, game.version)).unwrap();
+            let title = CString::new(format!("{} - Rust - {} - Launcher", game.title, game.version)).unwrap();
             let primary: unsafe extern "C" fn() -> u32 = symbol(library, "SDL_GetPrimaryDisplay");
             let usable_bounds: unsafe extern "C" fn(u32, *mut [c_int; 4]) -> bool = symbol(library, "SDL_GetDisplayUsableBounds");
             let mut bounds = [0; 4];
@@ -298,6 +303,9 @@ impl Sdl {
                 delay: symbol(library, "SDL_Delay"),
                 destroy_renderer: symbol(library, "SDL_DestroyRenderer"),
                 destroy_window: symbol(library, "SDL_DestroyWindow"),
+                read_pixels: symbol(library, "SDL_RenderReadPixels"),
+                convert_surface: symbol(library, "SDL_ConvertSurface"),
+                destroy_surface: symbol(library, "SDL_DestroySurface"),
             })
         }
     }
@@ -391,11 +399,6 @@ fn draw_frame(sdl: &Sdl) {
         sdl.rect([MARGIN + reach, y, 3.0, 2.0], ACCENT, true);
         sdl.rect([WIDTH - MARGIN - 3.0 - reach, y, 3.0, 2.0], ACCENT, true);
     }
-}
-
-/// Text with a gap after each letter, as the menus space their headings.
-fn spaced(text: &str) -> String {
-    text.chars().map(String::from).collect::<Vec<_>>().join(" ")
 }
 
 /// The folder's state, in a line short enough for the screen.
@@ -504,7 +507,10 @@ fn settings_path(game: &Game) -> Option<std::path::PathBuf> {
             return None;
         }
         let pref_path: unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char = symbol(library, "SDL_GetPrefPath");
-        let (owner, title) = (CString::new(SETTINGS_OWNER).unwrap(), CString::new(game.title).unwrap());
+        // The title was "Extreme Assault Rust" until 2026-11-20; the folder keeps that name so
+        // settings saved there are still found.
+        let _ = game;
+        let (owner, title) = (CString::new(SETTINGS_OWNER).unwrap(), CString::new("Extreme Assault Rust").unwrap());
         let folder = pref_path(owner.as_ptr(), title.as_ptr());
         if folder.is_null() {
             return None;
@@ -645,10 +651,12 @@ fn draw(sdl: &Sdl, game: &Game, settings: &Settings, status: &(String, bool), wa
         (sdl.clear)(sdl.renderer);
     }
     draw_frame(sdl);
+    // The line reads `TITLE - RUST - version` in every port.
     let title = game.title.to_uppercase();
-    let title = if title.len() * 2 - 1 <= LONGEST_TEXT - 4 { spaced(&title) } else { title };
-    sdl.write((WIDTH - title.len() as f32 * CHARACTER) / 2.0, 10.0, &title, VALUE);
-    sdl.write((WIDTH - game.version.len() as f32 * CHARACTER) / 2.0, 21.0, game.version, DIM);
+    let rest = format!(" - RUST - {}", game.version);
+    let left = (WIDTH - (title.len() + rest.len()) as f32 * CHARACTER) / 2.0;
+    sdl.write(left, 12.0, &title, VALUE);
+    sdl.write(left + title.len() as f32 * CHARACTER, 12.0, &rest, DIM);
     let all = rows(game, advanced);
     if advanced {
         let left = MARGIN + 4.0;
@@ -733,7 +741,52 @@ fn draw(sdl: &Sdl, game: &Game, settings: &Settings, status: &(String, bool), wa
     for (index, (text, colour)) in lines.iter().enumerate() {
         sdl.write((WIDTH - text.len() as f32 * CHARACTER) / 2.0, HEIGHT - 26.0 + index as f32 * 12.0, text, *colour);
     }
-    unsafe { (sdl.present)(sdl.renderer) };
+    if !TAKING_PICTURE.load(std::sync::atomic::Ordering::Relaxed) {
+        unsafe { (sdl.present)(sdl.renderer) };
+    }
+}
+
+/// Set while `snapshot` draws, so the drawing stays in the renderer to be read.
+static TAKING_PICTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The `launcher:NAME` script step, for the README's picture of the launcher
+/// (`release/launcher.png`): with a display (`./port recomp NAME "display
+/// launcher:launcher"`), the launcher is drawn once and saved as NAME.png
+/// beside the run's other pictures, and the scripted run goes on without it.
+pub fn snapshot(game: &Game, settings: &Settings) {
+    const PIXELFORMAT_RGB24: u32 = 0x1710_1803;
+    let Ok(script) = std::env::var("RECOMP_SCRIPT") else { return };
+    let Some(name) = script.split_whitespace().find_map(|step| step.strip_prefix("launcher:")) else { return };
+    let Some(sdl) = Sdl::open(game) else {
+        println!("no window for the launcher's picture");
+        return;
+    };
+    let all = rows(game, false);
+    let start = all.iter().position(|row| *row == Row::Start).unwrap_or(0);
+    TAKING_PICTURE.store(true, std::sync::atomic::Ordering::Relaxed);
+    draw(&sdl, game, settings, &folder_status(game, &settings.folder), &None, start, false);
+    TAKING_PICTURE.store(false, std::sync::atomic::Ordering::Relaxed);
+    unsafe {
+        let read = (sdl.read_pixels)(sdl.renderer, std::ptr::null());
+        let rgb = if read.is_null() { read } else { (sdl.convert_surface)(read, PIXELFORMAT_RGB24) };
+        if !rgb.is_null() {
+            let base = rgb as *const u8;
+            let (width, height, pitch) = (*(base.add(8) as *const i32), *(base.add(12) as *const i32), *(base.add(16) as *const i32));
+            let pixels = *(base.add(24) as *const *const u8);
+            let mut rows = Vec::with_capacity((width * height * 3) as usize);
+            for y in 0..height {
+                rows.extend_from_slice(std::slice::from_raw_parts(pixels.add((y * pitch) as usize), (width * 3) as usize));
+            }
+            let out = std::env::var("RECOMP_OUT").unwrap_or_else(|_| ".".to_string());
+            crate::host::script::write_png(&format!("{out}/{name}.png"), width as u32, height as u32, &rows);
+            println!("launcher saved as {name}.png");
+            (sdl.destroy_surface)(rgb);
+        }
+        if !read.is_null() {
+            (sdl.destroy_surface)(read);
+        }
+    }
+    sdl.close();
 }
 
 /// Whether the chosen renderer draws 3D at 640x480 whatever the resolution row says. Only Glide

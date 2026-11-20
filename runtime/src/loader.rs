@@ -572,6 +572,7 @@ pub fn run(game: &'static Game) {
         settings.renderer = index;
     }
     choose_renderer(game, settings.renderer);
+    host::launcher::snapshot(game, &settings);
     if host::launcher::wanted(&arguments) {
         // The launcher guesses no folder: it shows the one saved last time, or none to choose.
         if !arguments.iter().any(|argument| !argument.starts_with("--")) {

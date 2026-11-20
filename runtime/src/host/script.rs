@@ -523,6 +523,8 @@ pub fn advance(cpu: &mut Cpu) {
             }
             // A tap of Alt, which opens the game's menu anywhere.
             "alt" => cpu.host.menu_wanted = true,
+            // Taken before the game starts: see `launcher::snapshot`.
+            "launcher" => {}
             // The menu's own last row, Quit, which ends the program.
             "menu-quit" => {
                 println!("the player quit from the menu");
