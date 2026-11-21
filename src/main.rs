@@ -8,6 +8,7 @@ static MODULES: &[loader::Module] = &[
     loader::Module { file: "XA.EXE", base: 0x3000000, sha256: "952c865f2fcbb0abf1f7ecdb3f9e0433f0db837cf92381c3e97bd5395eeb35fb", program: true, name: "version 1.22 (patched)" },
     loader::Module { file: "XA.EXE@1.1", base: 0x4000000, sha256: "746bb06b1a1ac1e7ea15a1b64ccdb469048ecfd6084d6cec810a25c139519a7c", program: true, name: "English CD 1.1.0" },
     loader::Module { file: "XA.EXE@de", base: 0x5000000, sha256: "e69a049251c8ade591adb5e5ee02fed8b05d3313ba86ab4e6cd02408fbefd725", program: true, name: "German CD 1.0.1" },
+    loader::Module { file: "XA_3DFX.EXE@de", base: 0x6000000, sha256: "24f23a78015595cd8b53c04e3a3bf96a48d055f18fc0c29faecc6df1c947f000", program: true, name: "German 3dfx patch 1.1.0" },
 ];
 
 /// Each program's functions, from its own crate.
@@ -17,6 +18,7 @@ static TABLES: &[&[(u32, GuestFn)]] = &[
     extreme_assault_code_xa::TABLE,
     extreme_assault_code_xa_1_1::TABLE,
     extreme_assault_code_xa_de::TABLE,
+    extreme_assault_code_xa_3dfx_de::TABLE,
 ];
 
 static GAME: loader::Game = loader::Game {

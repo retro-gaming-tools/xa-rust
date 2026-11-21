@@ -538,7 +538,7 @@ fn command_with_choices(game: &Game, settings: &Settings) -> String {
 pub const DEFAULT_SCALE: u32 = 3;
 
 /// Reads `[folder] [--scale=N] [--fullscreen] [--drawing=processor|card] [--renderer=NAME] [--language=NAME] [--mod-off=NAME]
-/// [--mod-on=NAME] [--play] [game switches]`.
+/// [--mod-on=NAME] [--add-patch=FILE] [--play] [game switches]`.
 fn settings_from_arguments(game: &Game, arguments: &[String]) -> Settings {
     let has = |wanted: &str| arguments.iter().any(|argument| argument.eq_ignore_ascii_case(wanted));
     let scale = arguments.iter().find_map(|argument| argument.strip_prefix("--scale=")?.parse().ok());
@@ -615,6 +615,21 @@ pub fn run(game: &'static Game) {
         }
         host::cue::keep(std::path::Path::new(&folder), &target);
         folder = unpacked;
+    }
+    // `--add-patch=FILE`: Extreme Assault's German 3dfx patch (`xa_r110.zip`), as the
+    // launcher adds it. A relative FILE may also be in the game folder, as in tests.
+    if let Some(file) = arguments.iter().find_map(|argument| argument.strip_prefix("--add-patch=")) {
+        let path = std::path::Path::new(file);
+        let path = if path.exists() { path.to_path_buf() } else { std::path::Path::new(&folder).join(file) };
+        let added = host::rtpatch::patch_program(&path).ok_or_else(|| format!("{file} isn't the German 3dfx patch (xa_r110.zip)"))
+            .and_then(|patch| host::rtpatch::apply_to(&folder, &patch));
+        match added {
+            Ok(written) => println!("3dfx patch added: {written} files written"),
+            Err(problem) => {
+                host::video::show_error(game.title, &problem);
+                std::process::exit(1);
+            }
+        }
     }
     // A renderer the folder lacks gives way to one it has: the German disc has only software.
     settings.renderer = usable_renderer(game, &folder, settings.renderer);

@@ -23,6 +23,7 @@ pub mod pool;
 pub mod disc;
 pub mod ports;
 pub mod registry;
+pub mod rtpatch;
 pub mod script;
 pub mod timers;
 mod user32;

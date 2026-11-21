@@ -100,6 +100,8 @@ enum Row {
     Folder,
     /// Picks a disc image, or a folder by a file in it.
     File,
+    /// Picks Extreme Assault's German 3dfx patch, for a German disc without Glide.
+    Patch,
     Scale,
     /// Whether the graphics card or the processor draws Glide.
     Drawing,
@@ -588,7 +590,7 @@ const ROWS_BOTTOM: f32 = HEIGHT - 30.0;
 /// the defaults get right for nearly everyone: who draws the 3D, the game's
 /// renderer, and the mods marked `launcher-advanced`. The first page offers
 /// it only if it has rows.
-fn rows(game: &Game, advanced: bool) -> Vec<Row> {
+fn rows(game: &Game, advanced: bool, folder: &str) -> Vec<Row> {
     let mut more = Vec::new();
     // Only Glide is drawn by the runtime, so only it can go to the graphics card. A game that
     // lists no renderers has only its one, which here is Glide: Extreme Assault's XA_3DFX.EXE.
@@ -603,7 +605,11 @@ fn rows(game: &Game, advanced: bool) -> Vec<Row> {
         more.push(Row::Back);
         return more;
     }
-    let mut rows = vec![Row::Folder, Row::File, Row::Scale, Row::Display];
+    let mut rows = vec![Row::Folder, Row::File];
+    if patch_wanted(game, folder) {
+        rows.push(Row::Patch);
+    }
+    rows.extend([Row::Scale, Row::Display]);
     // The renderer is on the first page (user, 2026-11-15: "put the renderer
     // option back on the first page of the launcher").
     if game.renderers.len() > 1 {
@@ -619,6 +625,54 @@ fn rows(game: &Game, advanced: bool) -> Vec<Row> {
     }
     rows.extend([Row::Start, Row::Quit]);
     rows
+}
+
+/// Whether the chosen game is Extreme Assault's German disc without its 3dfx
+/// patch: an unpacked folder, or a disc image whose version says so.
+fn patch_wanted(game: &Game, folder: &str) -> bool {
+    // Rows are drawn every frame, and this reads the program: kept for the folder.
+    let mut known = PATCH_WANTED.lock().unwrap();
+    if let Some((for_folder, wanted)) = known.as_ref() {
+        if for_folder == folder {
+            return *wanted;
+        }
+    }
+    let wanted = if disc::is_image(std::path::Path::new(folder)) {
+        loader::version_in(game, folder).is_some_and(|name| name.starts_with("German CD"))
+    } else {
+        super::rtpatch::wanted(folder)
+    };
+    *known = Some((folder.to_string(), wanted));
+    wanted
+}
+
+/// The patch row's texts, which share its one line (a test checks they fit).
+const PATCH_LABEL: &str = "Add the 3dfx patch";
+const PATCH_ACTION: &str = "Choose file...";
+
+/// `patch_wanted`'s last answer, and the folder it was for.
+static PATCH_WANTED: Mutex<Option<(String, bool)>> = Mutex::new(None);
+
+/// Adds the German 3dfx patch from `patch` (`PATCH.EXE`'s bytes) to the chosen
+/// game, unpacking a disc image first, and returns the folder and what to show.
+fn add_patch(sdl: &Sdl, game: &Game, folder: &str, patch: &[u8]) -> (String, (String, bool)) {
+    let folder = if disc::is_image(std::path::Path::new(folder)) {
+        match unpack_image(sdl, game, folder) {
+            Ok(unpacked) => unpacked,
+            Err(problem) => return (folder.to_string(), (problem, false)),
+        }
+    } else {
+        folder.to_string()
+    };
+    *PATCH_WANTED.lock().unwrap() = None;
+    match super::rtpatch::apply_to(&folder, patch) {
+        Ok(_) => {
+            let status = folder_status(game, &folder);
+            let status = if status.1 { ("3dfx patch added: Glide ready".to_string(), true) } else { status };
+            (folder, status)
+        }
+        Err(problem) => (folder, (format!("Patch: {problem}"), false)),
+    }
 }
 
 /// A switch's label, and whether its row is on the advanced page: a label
@@ -657,7 +711,7 @@ fn draw(sdl: &Sdl, game: &Game, settings: &Settings, status: &(String, bool), wa
     let left = (WIDTH - (title.len() + rest.len()) as f32 * CHARACTER) / 2.0;
     sdl.write(left, 12.0, &title, VALUE);
     sdl.write(left + title.len() as f32 * CHARACTER, 12.0, &rest, DIM);
-    let all = rows(game, advanced);
+    let all = rows(game, advanced, &settings.folder);
     if advanced {
         let left = MARGIN + 4.0;
         sdl.write(left, FOLDER_TOP + 4.0, "Advanced settings", TEXT);
@@ -685,6 +739,10 @@ fn draw(sdl: &Sdl, game: &Game, settings: &Settings, status: &(String, bool), wa
                 sdl.write(left, top + 34.0, &shorten(&status.0), if status.1 { GOOD } else { BAD });
             }
             Row::File => sdl.write(left, line, "Choose a disc image or game file", TEXT),
+            Row::Patch => {
+                sdl.write(left, line, PATCH_LABEL, TEXT);
+                sdl.write_right(line, PATCH_ACTION, DIM);
+            }
             Row::Scale | Row::Drawing | Row::Display | Row::Renderer | Row::Language | Row::Switch(_) | Row::Mod(_) => {
                 let label = match row {
                     Row::Scale => "3D resolution",
@@ -727,6 +785,10 @@ fn draw(sdl: &Sdl, game: &Game, settings: &Settings, status: &(String, bool), wa
     // A warning takes the place of the two hint lines, which are the least needed.
     let lines = match warning {
         Some([first, second]) => [(first.as_str(), VALUE), (second.as_str(), VALUE)],
+        None if all.get(selected) == Some(&Row::Patch) => {
+            // The port never downloads it: the player does, from here.
+            [("Pick or drop xa_r110.zip, from", DIM), (super::rtpatch::DOWNLOAD, VALUE)]
+        }
         None => {
             let hint = if fixed_resolution(game, settings) {
                 "Software draws 3D at 640 x 480"
@@ -761,7 +823,7 @@ pub fn snapshot(game: &Game, settings: &Settings) {
         println!("no window for the launcher's picture");
         return;
     };
-    let all = rows(game, false);
+    let all = rows(game, false, &settings.folder);
     let start = all.iter().position(|row| *row == Row::Start).unwrap_or(0);
     TAKING_PICTURE.store(true, std::sync::atomic::Ordering::Relaxed);
     draw(&sdl, game, settings, &folder_status(game, &settings.folder), &None, start, false);
@@ -838,8 +900,9 @@ fn change(sdl: &Sdl, game: &Game, row: Row, step: i32, settings: &mut Settings, 
             let start = dialog_start(&settings.folder);
             unsafe { (sdl.pick_folder)(folder_picked, std::ptr::null_mut(), sdl.window, start.as_ptr(), false) };
         }
-        // A file: the disc image, or any file of a game that's in a folder.
-        Row::File => {
+        // A file: the disc image, or any file of a game that's in a folder. The
+        // patch row's file is told apart by what it holds, so it shares this.
+        Row::File | Row::Patch => {
             let start = dialog_start(&settings.folder);
             unsafe { (sdl.pick_file)(folder_picked, std::ptr::null_mut(), sdl.window, std::ptr::null(), 0, start.as_ptr(), false) };
         }
@@ -885,7 +948,7 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
     loader::choose_renderer(game, settings.renderer);
     let Some(sdl) = Sdl::open(game) else { return Outcome::Unavailable(settings) };
     let mut advanced = false;
-    let mut all = rows(game, advanced);
+    let mut all = rows(game, advanced, &settings.folder);
     let start_row = all.iter().position(|row| *row == Row::Start).unwrap_or(0);
     let mut status = folder_status(game, &settings.folder);
     let mut warning = folder_warning(&settings.folder);
@@ -919,8 +982,8 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
                     BUTTON_SOUTH => Some((None, 0, false)),
                     BUTTON_START => {
                         advanced = false;
-                        all = rows(game, advanced);
-                        selected = start_row;
+                        all = rows(game, advanced, &settings.folder);
+                        selected = all.iter().position(|row| *row == Row::Start).unwrap_or(start_row);
                         Some((None, 0, false))
                     }
                     BUTTON_EAST => Some((None, 0, true)),
@@ -958,7 +1021,7 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
             let enter = !advanced && !quit && step == 0 && movement.is_none() && all[selected] == Row::Advanced;
             if leave || enter {
                 advanced = enter;
-                all = rows(game, advanced);
+                all = rows(game, advanced, &settings.folder);
                 selected = if enter { 0 } else { all.iter().position(|row| *row == Row::Advanced).unwrap_or(0) };
                 continue;
             }
@@ -980,15 +1043,23 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
             }
         }
         if let Some(picked) = PICKED.lock().unwrap().take() {
-            settings.folder = game_place(game, &picked);
+            // The German 3dfx patch, picked or dropped, goes into the chosen game, and
+            // Glide becomes the renderer. Anything else is a game to choose.
+            let patch = super::rtpatch::patch_program(std::path::Path::new(&picked));
+            if let Some(patch) = patch {
+                (settings.folder, status) = add_patch(&sdl, game, &settings.folder, &patch);
+                settings.renderer = 0;
+            } else {
+                settings.folder = game_place(game, &picked);
+                status = folder_status(game, &settings.folder);
+            }
             settings.renderer = loader::usable_renderer(game, &settings.folder, settings.renderer);
             loader::choose_renderer(game, settings.renderer);
-            status = folder_status(game, &settings.folder);
             warning = folder_warning(&settings.folder);
             // The folder's row is on the first page.
             advanced = false;
-            all = rows(game, advanced);
-            selected = if status.1 { start_row } else { 0 };
+            all = rows(game, advanced, &settings.folder);
+            selected = if status.1 { all.iter().position(|row| *row == Row::Start).unwrap_or(0) } else { 0 };
         }
         // A disc image is unpacked before the game starts, and the folder it
         // went to is what's remembered. If that fails the launcher stays, with
@@ -1021,6 +1092,14 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn patch_texts_fit() {
+        // The row's label and action, with a space between, and the hint line's address,
+        // which has the whole width (user, 2026-11-20: the first label ran into the action).
+        assert!(PATCH_LABEL.len() + 1 + PATCH_ACTION.len() <= LONGEST_TEXT);
+        assert!(super::super::rtpatch::DOWNLOAD.len() as f32 * CHARACTER <= WIDTH);
+    }
 
     #[test]
     fn window_fits_the_screen() {

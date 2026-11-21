@@ -2,7 +2,7 @@
   "name": "extreme-assault",
   "title": "Extreme Assault",
   "needs": "Extreme Assault by Blue Byte: the English CD (version E 1.1.0), the German CD (R 1.0.1), or a copy patched to version 1.23",
-  "recompVersion": "0.5-beta",
+  "recompVersion": "0.55-beta",
   "recompRepo": "retro-gaming-tools/xa-rust",
   "recompCommand": "XA_3DFX.EXE",
   "recompSwitches": {
@@ -47,13 +47,15 @@
     "XA_3DFX.EXE@1.1": "7abb3557fa36c5425e6b6f5cf2d630609e3c4edce229cd20d84bd5bb7aa224bb",
     "XA.EXE": "952c865f2fcbb0abf1f7ecdb3f9e0433f0db837cf92381c3e97bd5395eeb35fb",
     "XA.EXE@1.1": "746bb06b1a1ac1e7ea15a1b64ccdb469048ecfd6084d6cec810a25c139519a7c",
-    "XA.EXE@de": "e69a049251c8ade591adb5e5ee02fed8b05d3313ba86ab4e6cd02408fbefd725"
+    "XA.EXE@de": "e69a049251c8ade591adb5e5ee02fed8b05d3313ba86ab4e6cd02408fbefd725",
+    "XA_3DFX.EXE@de": "24f23a78015595cd8b53c04e3a3bf96a48d055f18fc0c29faecc6df1c947f000"
   },
   "recompVersionNames": {
     "XA_3DFX.EXE": "version 1.23 (patched)",
     "XA_3DFX.EXE@1.1": "English CD 1.1.0",
     "XA.EXE": "version 1.22 (patched)",
     "XA.EXE@1.1": "English CD 1.1.0",
-    "XA.EXE@de": "German CD 1.0.1"
+    "XA.EXE@de": "German CD 1.0.1",
+    "XA_3DFX.EXE@de": "German 3dfx patch 1.1.0"
   }
 }

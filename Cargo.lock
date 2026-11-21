@@ -84,6 +84,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "extreme-assault-code-xa_3dfx_de"
+version = "0.1.0"
+dependencies = [
+ "extreme-assault-code-xa_de",
+ "recomp-runtime",
+]
+
+[[package]]
 name = "extreme-assault-code-xa_de"
 version = "0.1.0"
 dependencies = [
@@ -93,12 +101,13 @@ dependencies = [
 
 [[package]]
 name = "extreme-assault-rust"
-version = "0.5.0-beta"
+version = "0.55.0-beta"
 dependencies = [
  "extreme-assault-code-xa",
  "extreme-assault-code-xa_1_1",
  "extreme-assault-code-xa_3dfx",
  "extreme-assault-code-xa_3dfx_1_1",
+ "extreme-assault-code-xa_3dfx_de",
  "extreme-assault-code-xa_de",
  "recomp-runtime",
 ]

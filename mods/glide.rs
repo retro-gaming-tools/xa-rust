@@ -35,6 +35,12 @@ pub fn f_020c1fb0(cpu: &mut Cpu) {
     call_glide(cpu, 0x020c1fb0);
 }
 
+/// The same loader in the German `XA_3DFX.EXE` R 1.1.0, from the 3dfx patch
+/// `xa_r110` (the only loader the program's 131 stub pairs call).
+pub fn f_060c17d0(cpu: &mut Cpu) {
+    call_glide(cpu, 0x060c17d0);
+}
+
 /// Whether the 5 bytes at `at` are a `call` to `loader`.
 fn calls(cpu: &Cpu, at: u32, loader: u32) -> bool {
     cpu.r8(at) == CALL && at.wrapping_add(STUB_SIZE).wrapping_add(cpu.r32(at + 1)) == loader
@@ -79,6 +85,8 @@ fn lift_frame_limit(cpu: &mut Cpu, loader: u32) {
     let setting = match loader {
         0x010c3b60 => 0x0117_349c_u32.wrapping_add(cpu.bases[3]),
         0x020c1fb0 => 0x0217_33bc,
+        // German R 1.1.0: the same loads in its main loop and setting code.
+        0x060c17d0 => 0x0617_32ec,
         _ => return,
     };
     if cpu.r32(setting) == 0 {

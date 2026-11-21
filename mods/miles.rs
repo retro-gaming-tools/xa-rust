@@ -492,3 +492,33 @@ pub fn f_050944c0(cpu: &mut Cpu) { start_sample(cpu) } // AIL_start_sample
 pub fn f_050942b0(cpu: &mut Cpu) { end_sample(cpu) } // AIL_end_sample
 pub fn f_05093de0(cpu: &mut Cpu) { sample_status(cpu) } // AIL_sample_status
 pub fn f_05093920(cpu: &mut Cpu) { master_volume(cpu) } // AIL_set_digital_master_volume
+
+// XA_3DFX.EXE R 1.1.0, the German 3dfx patch (xa_r110): Miles sits 0x3e0
+// before E 1.1.0's, each function agreeing in 54-55 of its first 64 bytes.
+pub fn f_060a95f0(cpu: &mut Cpu) { install_driver(cpu) } // AIL_install_MDI_INI
+pub fn f_060abbf0(cpu: &mut Cpu) { install_driver(cpu) } // AIL_install_DIG_INI
+pub fn f_060a9330(cpu: &mut Cpu) { allocate_sequence(cpu) } // AIL_allocate_sequence_handle
+pub fn f_060ab930(cpu: &mut Cpu) { allocate_sample(cpu) } // AIL_allocate_sample_handle
+pub fn f_060ab760(cpu: &mut Cpu) { release_sample(cpu) } // AIL_release_sample_handle
+pub fn f_060a9280(cpu: &mut Cpu) { release_sequence(cpu) } // AIL_release_sequence_handle
+pub fn f_060aba30(cpu: &mut Cpu) { nothing(cpu) } // AIL_uninstall_DIG_driver
+pub fn f_060a9430(cpu: &mut Cpu) { nothing(cpu) } // AIL_uninstall_MDI_driver
+pub fn f_060a83b0(cpu: &mut Cpu) { nothing(cpu) } // AIL_set_GTL_filename_prefix
+pub fn f_060a9160(cpu: &mut Cpu) { init_sequence(cpu) } // AIL_init_sequence
+pub fn f_060a90b0(cpu: &mut Cpu) { start_sequence(cpu) } // AIL_start_sequence
+pub fn f_060a9000(cpu: &mut Cpu) { stop_sequence(cpu) } // AIL_stop_sequence
+pub fn f_060a8f50(cpu: &mut Cpu) { resume_sequence(cpu) } // AIL_resume_sequence
+pub fn f_060a8ea0(cpu: &mut Cpu) { end_sequence(cpu) } // AIL_end_sequence
+pub fn f_060a8d00(cpu: &mut Cpu) { set_sequence_volume(cpu) } // AIL_set_sequence_volume
+pub fn f_060a8c40(cpu: &mut Cpu) { set_sequence_loops(cpu) } // AIL_set_sequence_loop_count
+pub fn f_060ab6b0(cpu: &mut Cpu) { init_sample(cpu) } // AIL_init_sample
+pub fn f_060ab590(cpu: &mut Cpu) { set_sample_file(cpu) } // AIL_set_sample_file
+pub fn f_060ab4c0(cpu: &mut Cpu) { set_sample_address(cpu) } // AIL_set_sample_address
+pub fn f_060ab070(cpu: &mut Cpu) { set_sample_rate(cpu) } // AIL_set_sample_playback_rate
+pub fn f_060aafb0(cpu: &mut Cpu) { set_sample_level(cpu, false) } // AIL_set_sample_volume
+pub fn f_060aaef0(cpu: &mut Cpu) { set_sample_level(cpu, true) } // AIL_set_sample_pan
+pub fn f_060aae30(cpu: &mut Cpu) { set_sample_loops(cpu) } // AIL_set_sample_loop_count
+pub fn f_060ab340(cpu: &mut Cpu) { start_sample(cpu) } // AIL_start_sample
+pub fn f_060ab130(cpu: &mut Cpu) { end_sample(cpu) } // AIL_end_sample
+pub fn f_060aac60(cpu: &mut Cpu) { sample_status(cpu) } // AIL_sample_status
+pub fn f_060aa7a0(cpu: &mut Cpu) { master_volume(cpu) } // AIL_set_digital_master_volume
