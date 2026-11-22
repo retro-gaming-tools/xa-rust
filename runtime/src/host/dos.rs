@@ -888,8 +888,7 @@ fn dos_call(cpu: &mut Cpu, ah: u32) -> bool {
             result(cpu, outcome);
         }
         0x4c => {
-            println!("the game exited with code {}", cpu.eax & 0xff);
-            std::process::exit((cpu.eax & 0xff) as i32);
+            crate::runlog::exit((cpu.eax & 0xff) as i32);
         }
         _ => return false,
     }

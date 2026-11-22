@@ -94,7 +94,29 @@ pub fn wanted(arguments: &[String]) -> bool {
     !play && !scripted && std::env::var_os("RECOMP_HEADLESS").is_none()
 }
 
-#[derive(Clone, Copy, PartialEq)]
+/// A step of the launcher in `recomp.log`, written at once in case the next one crashes.
+pub(crate) fn note(text: &str) {
+    crate::runlog::line(&format!("launcher: {text}"));
+}
+
+fn note_settings(game: &Game, settings: &Settings) {
+    let renderer = game.renderers.get(settings.renderer).map_or("the game's only one", |(_, label)| *label);
+    note(&format!("game {:?}, renderer {renderer}, scale {}, fullscreen {}, 3D on the processor {}", settings.folder, settings.scale, settings.fullscreen, settings.processor));
+}
+
+/// Why SDL couldn't do what was asked.
+fn sdl_error() -> String {
+    unsafe {
+        let library = sys::open_sdl();
+        if library.is_null() {
+            return "SDL3 couldn't be loaded".to_string();
+        }
+        let error: unsafe extern "C" fn() -> *const c_char = symbol(library, "SDL_GetError");
+        CStr::from_ptr(error()).to_string_lossy().into_owned()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Row {
     /// Shows the game's folder or disc image, and picks a folder.
     Folder,
@@ -129,6 +151,12 @@ fn game_place(game: &Game, picked: &str) -> String {
     }
     let folder = if path.is_dir() { path.to_path_buf() } else { path.parent().map(|p| p.to_path_buf()).unwrap_or_default() };
     let passes = |folder: &std::path::Path| loader::check_files(game, &folder.to_string_lossy()).is_ok();
+    // A folder that holds only the disc image, such as a `.bin` and its `.cue`.
+    if !passes(&folder) {
+        if let Some(image) = disc::image_in(&folder).filter(|image| disc::Disc::open(image).is_ok()) {
+            return image.display().to_string();
+        }
+    }
     match folder.parent() {
         Some(above) if !passes(&folder) && passes(above) => above.display().to_string(),
         _ => folder.display().to_string(),
@@ -136,23 +164,35 @@ fn game_place(game: &Game, picked: &str) -> String {
 }
 
 /// Unpacks a chosen disc image into `game` beside the program, showing how far
-/// it is, and returns that folder. A `game` folder that already holds the
-/// right files is used as it is.
+/// it is, and returns that folder. A folder that already holds this image's
+/// version is used as it is (see `loader::unpack_target`).
 fn unpack_image(sdl: &Sdl, game: &Game, image: &str) -> Result<String, String> {
-    let target = loader::unpack_target(game);
-    let folder = target.display().to_string();
-    if loader::check_files(game, &folder).is_ok() {
-        // The image's music is played from the image, so the folder keeps
-        // where it is, even when it was unpacked from another copy before.
-        super::cue::keep(std::path::Path::new(image), &target);
-        return Ok(folder);
+    loader::unpack_image(game, std::path::Path::new(image), &mut unpack_progress(sdl, game))
+}
+
+/// Takes what the player picked or dropped as the game, with a renderer it can
+/// run, and returns what to show.
+fn choose_game(game: &Game, settings: &mut Settings, picked: &str) -> (String, bool) {
+    settings.folder = game_place(game, picked);
+    settings.renderer = loader::usable_renderer(game, &settings.folder, settings.renderer);
+    folder_status(game, &settings.folder)
+}
+
+/// What Start does before the launcher closes: unpacks a chosen disc image. The
+/// image stays the choice that's saved, and `loader::run` finds its copy again.
+fn prepare_start(game: &Game, settings: &Settings, progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
+    let chosen = std::path::Path::new(&settings.folder);
+    if disc::is_image(chosen) {
+        loader::unpack_image(game, chosen, progress)?;
     }
-    if target.exists() {
-        return Err(format!("{folder} is in the way: it holds other files. Move or delete it."));
-    }
+    Ok(())
+}
+
+/// Draws how far unpacking is.
+fn unpack_progress<'a>(sdl: &'a Sdl, game: &'a Game) -> impl FnMut(u64, u64) + 'a {
     let mut shown = u64::MAX;
     let mut event = Event([0; 128]);
-    disc::unpack(std::path::Path::new(image), &target, &mut |written, total| {
+    move |written, total| {
         let percent = written * 100 / total.max(1);
         if percent == shown {
             return;
@@ -172,10 +212,7 @@ fn unpack_image(sdl: &Sdl, game: &Game, image: &str) -> Result<String, String> {
         sdl.rect(bar, PANEL, true);
         sdl.rect([bar[0], bar[1], bar[2] * percent as f32 / 100.0, bar[3]], BORDER, true);
         unsafe { (sdl.present)(sdl.renderer) };
-    })?;
-    super::cue::keep(std::path::Path::new(image), &target);
-    loader::choose_cd_music(std::path::Path::new(image), &target);
-    Ok(folder)
+    }
 }
 
 /// Where a dialog opens: the chosen folder, or the folder of the chosen image, if it's there,
@@ -489,6 +526,10 @@ fn absolute(folder: &str) -> String {
 /// The folder of the program the player started. An AppImage's program sits in a read-only
 /// mount, so for one it's the folder holding the AppImage file.
 pub(crate) fn program_folder() -> Option<std::path::PathBuf> {
+    #[cfg(test)]
+    if let Some(folder) = TEST_PROGRAM_FOLDER.with(|folder| folder.borrow().clone()) {
+        return Some(folder);
+    }
     let program = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok())?;
     program.parent().map(|folder| folder.to_path_buf())
 }
@@ -519,6 +560,11 @@ fn settings_path(game: &Game) -> Option<std::path::PathBuf> {
         }
         Some(std::path::PathBuf::from(CStr::from_ptr(folder).to_string_lossy().into_owned()).join(USER_SETTINGS_FILE))
     }
+}
+
+/// The folder `settings_path` is in, for `recomp.log` when the program's folder is read-only.
+pub(crate) fn settings_folder(game: &Game) -> Option<std::path::PathBuf> {
+    Some(settings_path(game)?.parent()?.to_path_buf())
 }
 
 /// Fills in what the last run chose, where the command line didn't say.
@@ -638,7 +684,10 @@ fn patch_wanted(game: &Game, folder: &str) -> bool {
         }
     }
     let wanted = if disc::is_image(std::path::Path::new(folder)) {
-        loader::version_in(game, folder).is_some_and(|name| name.starts_with("German CD"))
+        match loader::unpacked_copy(game, std::path::Path::new(folder)) {
+            Some(copy) => super::rtpatch::wanted(&copy.to_string_lossy()),
+            None => loader::version_in(game, folder).is_some_and(|name| name.starts_with("German CD")),
+        }
     } else {
         super::rtpatch::wanted(folder)
     };
@@ -654,24 +703,25 @@ const PATCH_ACTION: &str = "Choose file...";
 static PATCH_WANTED: Mutex<Option<(String, bool)>> = Mutex::new(None);
 
 /// Adds the German 3dfx patch from `patch` (`PATCH.EXE`'s bytes) to the chosen
-/// game, unpacking a disc image first, and returns the folder and what to show.
-fn add_patch(sdl: &Sdl, game: &Game, folder: &str, patch: &[u8]) -> (String, (String, bool)) {
-    let folder = if disc::is_image(std::path::Path::new(folder)) {
-        match unpack_image(sdl, game, folder) {
+/// game, unpacking a disc image first, and returns what to show. An image
+/// stays the chosen game.
+fn add_patch(sdl: &Sdl, game: &Game, chosen: &str, patch: &[u8]) -> (String, bool) {
+    let folder = if disc::is_image(std::path::Path::new(chosen)) {
+        match unpack_image(sdl, game, chosen) {
             Ok(unpacked) => unpacked,
-            Err(problem) => return (folder.to_string(), (problem, false)),
+            Err(problem) => return (problem, false),
         }
     } else {
-        folder.to_string()
+        chosen.to_string()
     };
+    let added = super::rtpatch::apply_to(&folder, patch);
     *PATCH_WANTED.lock().unwrap() = None;
-    match super::rtpatch::apply_to(&folder, patch) {
+    match added {
         Ok(_) => {
             let status = folder_status(game, &folder);
-            let status = if status.1 { ("3dfx patch added: Glide ready".to_string(), true) } else { status };
-            (folder, status)
+            if status.1 { ("3dfx patch added: Glide ready".to_string(), true) } else { status }
         }
-        Err(problem) => (folder, (format!("Patch: {problem}"), false)),
+        Err(problem) => (format!("Patch: {problem}"), false),
     }
 }
 
@@ -895,6 +945,7 @@ fn click_step(game: &Game, row: Row, settings: &Settings, x: f32) -> i32 {
 /// Changes a setting by one step, or does what a button row does. Returns the
 /// outcome when the launcher is done.
 fn change(sdl: &Sdl, game: &Game, row: Row, step: i32, settings: &mut Settings, ready: bool) -> Option<bool> {
+    note(&format!("pressed {row:?}, step {step}"));
     match row {
         Row::Folder => {
             let start = dialog_start(&settings.folder);
@@ -946,11 +997,18 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
     load(game, &mut settings, gave_folder);
     settings.renderer = loader::usable_renderer(game, &settings.folder, settings.renderer);
     loader::choose_renderer(game, settings.renderer);
-    let Some(sdl) = Sdl::open(game) else { return Outcome::Unavailable(settings) };
+    note_settings(game, &settings);
+    note("opening the window");
+    let Some(sdl) = Sdl::open(game) else {
+        note(&format!("no window: {}", sdl_error()));
+        return Outcome::Unavailable(settings);
+    };
+    note("window open, checking the game");
     let mut advanced = false;
     let mut all = rows(game, advanced, &settings.folder);
     let start_row = all.iter().position(|row| *row == Row::Start).unwrap_or(0);
     let mut status = folder_status(game, &settings.folder);
+    note(&status.0);
     let mut warning = folder_warning(&settings.folder);
     // Start is ready to press, unless the folder needs choosing first.
     let mut selected = if status.1 { start_row } else { 0 };
@@ -1045,14 +1103,16 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
         if let Some(picked) = PICKED.lock().unwrap().take() {
             // The German 3dfx patch, picked or dropped, goes into the chosen game, and
             // Glide becomes the renderer. Anything else is a game to choose.
+            note(&format!("picked {picked:?}"));
             let patch = super::rtpatch::patch_program(std::path::Path::new(&picked));
             if let Some(patch) = patch {
-                (settings.folder, status) = add_patch(&sdl, game, &settings.folder, &patch);
+                note("adding the 3dfx patch");
+                status = add_patch(&sdl, game, &settings.folder, &patch);
                 settings.renderer = 0;
             } else {
-                settings.folder = game_place(game, &picked);
-                status = folder_status(game, &settings.folder);
+                status = choose_game(game, &mut settings, &picked);
             }
+            note(&status.0);
             settings.renderer = loader::usable_renderer(game, &settings.folder, settings.renderer);
             loader::choose_renderer(game, settings.renderer);
             warning = folder_warning(&settings.folder);
@@ -1061,17 +1121,15 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
             all = rows(game, advanced, &settings.folder);
             selected = if status.1 { all.iter().position(|row| *row == Row::Start).unwrap_or(0) } else { 0 };
         }
-        // A disc image is unpacked before the game starts, and the folder it
-        // went to is what's remembered. If that fails the launcher stays, with
-        // the reason where the folder's state is shown.
-        if result == Some(true) && disc::is_image(std::path::Path::new(&settings.folder)) {
-            match unpack_image(&sdl, game, &settings.folder) {
-                Ok(folder) => settings.folder = folder,
-                Err(problem) => {
-                    status = (problem, false);
-                    selected = 0;
-                    result = None;
-                }
+        // If unpacking a disc image fails the launcher stays, with the reason
+        // where the folder's state is shown.
+        if result == Some(true) {
+            note("preparing the start");
+            if let Err(problem) = prepare_start(game, &settings, &mut unpack_progress(&sdl, game)) {
+                note(&problem);
+                status = (problem, false);
+                selected = 0;
+                result = None;
             }
         }
         if let Some(done) = result {
@@ -1080,6 +1138,8 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
         draw(&sdl, game, &settings, &status, &warning, selected, advanced);
         unsafe { (sdl.delay)(FRAME_MILLISECONDS) };
     };
+    note(if finished { "closing to start the game" } else { "closing, the player quit" });
+    note_settings(game, &settings);
     sdl.close();
     if finished {
         save(game, &settings);
@@ -1088,6 +1148,15 @@ pub fn show(game: &Game, mut settings: Settings) -> Outcome {
         Outcome::Quit
     }
 }
+
+// Stands in for the program's folder, for each test's thread.
+#[cfg(test)]
+thread_local! {
+    static TEST_PROGRAM_FOLDER: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+mod image_tests;
 
 #[cfg(test)]
 mod tests {

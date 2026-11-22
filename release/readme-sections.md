@@ -34,7 +34,7 @@ The game came as two programs: `XA_3DFX.EXE` for 3Dfx (Glide) cards and `XA.EXE`
 | Patched 1.23 / 1.22 | `c24019df…` (1.23) | `952c865f…` (1.22) | An installed game with Blue Byte's updates applied |
 | German CD, R 1.0.1 | `24f23a78…` (R 1.1.0, from the 3Dfx patch) | `e69a0492…` | The German disc, as a disc image or its files; for Glide, with the German 3Dfx patch added |
 
-State: the Glide programs run menus, missions, sound and CD music. The software programs reach the menus and missions (English 1.1 played mission 1, German 1.0.1 reaches the main menu); they're newer and less tried. The German disc has no Glide program of its own: the launcher adds the one from Blue Byte's German 3Dfx patch.
+The German disc has no Glide program of its own: the launcher adds the one from Blue Byte's German 3Dfx patch. Other patch levels and other languages' discs aren't supported: their programs differ, and the launcher says which version it found.
 
 - **Glide** is drawn by the port at the resolution you choose (*3D resolution*), on the graphics card or the processor.
 - **Software** is the game's own renderer, at the game's own resolutions. Choose them in the game: *Options*, *Resolution Setup* lists all of its low- and high-resolution methods, in 256 colours or HiColor, as on a real VESA card.
@@ -58,10 +58,30 @@ The German disc came with the software renderer only. Blue Byte's German 3Dfx pa
 2. Choose the German disc (image or files) in the launcher. A row *Add the 3dfx patch* appears.
 3. Pick the downloaded `xa_r110.zip` there, or drop it onto the window. `XA_R110.EXE` or its `PATCH.EXE` work too.
 
-The port checks the patch by SHA-256, unpacks it, and writes `XA_3DFX.EXE` (`24f23a78…`), `GLIDE2X.OVL`, the 3Dfx cockpit pictures and the patch's changes to `GFX.CHR`, `INGAME.CHR`, `VORHLT.DAT` and `VORHLTLO.DAT` into the game folder, each checked by SHA-256 too. A disc image is unpacked first, into the `game` folder beside the program. The renderer then switches to Glide. The patch's `XA.EXE` (1.10's software program) isn't written: the port keeps the disc's 1.0.1 for software. Without the launcher, `--add-patch=xa_r110.zip` on the command line does the same.
+The port checks the patch by SHA-256, unpacks it, and writes `XA_3DFX.EXE` (`24f23a78…`), `GLIDE2X.OVL`, the 3Dfx cockpit pictures and the patch's changes to `GFX.CHR`, `INGAME.CHR`, `VORHLT.DAT` and `VORHLTLO.DAT` into the game folder, each checked by SHA-256 too. A disc image is unpacked first (see *Starting*). The renderer then switches to Glide. The patch's `XA.EXE` (1.10's software program) isn't written: the port keeps the disc's 1.0.1 for software. Without the launcher, `--add-patch=xa_r110.zip` on the command line does the same.
 
 The patch is Pocket Soft's .RTPatch; the port reads it as worked out by [rtptool](https://github.com/bwrsandman/rtptool) (MIT licence).
 
-Other patch levels and other languages' discs aren't supported: their programs differ, and the launcher says which version it found.
+## Starting
 
-With a disc image, the port unpacks the disc once and plays its CD music straight from the image. It also starts with CD music and the controller switched on; a patched install keeps its own settings.
+You don't install the game. In the launcher, pick your disc image, the game's folder or any file in it, or drop it on the window.
+
+A disc image is unpacked once, into a `game` folder beside the program, or into one named for the version (such as `game-german-cd-1-0-1`) when `game` holds something else, so each version keeps its own saves. The launcher remembers the image and offers the renderers that version has. Keep the image where it is: its CD music plays straight from it. A freshly unpacked disc starts with CD music and the controller switched on; a patched install keeps its own settings.
+
+## What works
+
+- The menus, briefings and missions of all six zones, with each supported version.
+- Glide at 60 frames a second, and the software renderer.
+- Glide for the German CD, with the 3Dfx patch.
+- Saving and loading, and saves made with the original.
+- Sound effects, CD music and MIDI music.
+- Mouse, keyboard and controller.
+
+## Known limits
+
+- Only four of a controller's buttons reach the game in missions.
+- A patched install can't use a disc image as its CD.
+- No network play or force feedback.
+- The picture is 4:3.
+
+If something doesn't work, please open an issue and attach `recomp.log`, which is beside the program (beside the `.AppImage` file on Linux). After starting again, it's `recomp-previous.log`.

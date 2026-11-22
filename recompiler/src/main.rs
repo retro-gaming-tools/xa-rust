@@ -174,9 +174,9 @@ fn write_crate(game: &str, info: &Info, modules: &[Module], programs: &[Program]
     }
     let _ = write!(
         main,
-        "];\n\nstatic GAME: loader::Game = loader::Game {{\n    title: \"{}\",\n    version: include_str!(\"../VERSION\").trim_ascii(),\n    needs: \"{}\",\n    command: {:?},\n    switches: &[{}],\n    renderers: &[{}],\n    languages: &[{}],\n    mods: &[{}],\n    modules: MODULES,\n    tables: TABLES,\n    icon: include_bytes!(\"../icon.rgba\"),\n    music: &[{}],\n    registry: &[{}],\n    cd: {:?},\n    install: &[{}],\n    cd_tracks: &[{}],\n}};\n\nfn main() {{\n    loader::run(&GAME);\n}}\n",
+        "];\n\nstatic GAME: loader::Game = loader::Game {{\n    title: \"{}\",\n    version: include_str!(\"../VERSION\").trim_ascii(),\n    needs: \"{}\",\n    command: {:?},\n    switches: &[{}],\n    renderers: &[{}],\n    languages: &[{}],\n    mods: &[{}],\n    modules: MODULES,\n    tables: TABLES,\n    icon: include_bytes!(\"../icon.rgba\"),\n    music: &[{}],\n    registry: &[{}],\n    cd: {:?},\n    install: &[{}],\n    cd_tracks: &[{}],\n    normal_exits: &[{}],\n}};\n\nfn main() {{\n    loader::run(&GAME);\n}}\n",
         info.title, info.needs, info.command, switches(), choices("RECOMP_RENDERERS"), choices("RECOMP_LANGUAGES"), launcher_mods(mods), music(),
-        registry(), std::env::var("RECOMP_CD").unwrap_or_default(), install(), cd_tracks()
+        registry(), std::env::var("RECOMP_CD").unwrap_or_default(), install(), cd_tracks(), normal_exits()
     );
     write_if_changed(&source.join("main.rs"), &main)
 }
@@ -196,6 +196,15 @@ fn version_name(file: &str) -> String {
 fn install() -> String {
     let text = std::env::var("RECOMP_INSTALL").unwrap_or_default();
     text.split(';').map(str::trim).filter(|folder| !folder.is_empty()).map(|folder| format!("{folder:?}")).collect::<Vec<_>>().join(", ")
+}
+
+/// `RECOMP_NORMAL_EXITS`, from `recompNormalExits` in `port.json`: exit codes
+/// besides 0 that the game gives when the player quits, separated by spaces
+/// (Extreme Assault's German 1.0.1 program quits with 39). The runtime shows
+/// no error message for them.
+fn normal_exits() -> String {
+    let text = std::env::var("RECOMP_NORMAL_EXITS").unwrap_or_default();
+    text.split_whitespace().map(|code| code.parse::<i32>().unwrap_or_else(|_| panic!("recompNormalExits: {code} isn't a number")).to_string()).collect::<Vec<_>>().join(", ")
 }
 
 /// `RECOMP_CD_TRACKS`, from `recompCdTracks` in `port.json`: where each of
@@ -282,7 +291,7 @@ fn readme(game: &str, info: &Info) -> String {
     let repo = repo.trim();
     format!(r#"# {title}, recompiled
 
-A native Windows and Linux version of {title}, made by translating the game's original Windows program statically into Rust, on a new runtime built on SDL3. The version is in `VERSION`, and releases are at https://github.com/{repo}/releases.
+A native Windows and Linux version of {title}, made by translating the game's original DOS programs statically into Rust, on a new runtime built on SDL3. The version is in `VERSION`, and releases are at https://github.com/{repo}/releases.
 
 The coding was done by AI (Claude, by Anthropic). The testing was done by a human.
 
@@ -292,10 +301,10 @@ The coding was done by AI (Claude, by Anthropic). The testing was done by a huma
 
 So you don't have to trust a download. Everything that makes the release is in this repository:
 
-- `src/`: the game's code, translated to Rust by the recompiler. Don't edit it by hand: it's regenerated.
+- `programs/`: the game's code, translated to Rust by the recompiler, a folder for each program, and `src/`, which starts them. Don't edit them by hand: they're regenerated.
 - `mods/`: hand-written Rust that replaces some of the game's functions (see below).
-- `runtime/`: the hand-written runtime: the CPU state, the Windows functions the game calls, video, sound and input on SDL3, and the launcher.
-- `recompiler/`: the static recompiler that wrote `src/`.
+- `runtime/`: the hand-written runtime: the CPU state, the DOS functions the game calls, video, sound and input on SDL3, and the launcher.
+- `recompiler/`: the static recompiler that wrote `programs/` and `src/`.
 - `build/`, `build.sh`, `regenerate.sh`: the Docker build for the release, and the check that the code matches your game.
 - `.github/workflows/build.yml`: GitHub builds the release from a tagged commit, with build provenance.
 - `CHANGELOG.md`: what changed in each version, and `changes.sh`, which shows the full diff between two versions.
@@ -340,7 +349,7 @@ The recompiler, the runtime, the mods and the build scripts are under the MIT li
 
 MIDI music is played by [rustysynth](https://github.com/sinshu/rustysynth) (MIT) with the GeneralUser GS sound bank v2.0.3 by S. Christian Collins (https://www.schristiancollins.com), which is built into the program. Its licence is in `runtime/assets/GeneralUser-GS-LICENSE.txt`.
 
-The code in `src/code/` is translated from the program files of the original game, including the Microsoft C runtime it comes with. That code belongs to its rights holders, so no licence is granted for it here. This project isn't affiliated with or endorsed by them. Please buy the game.
+The code in `programs/` is translated from the program files of the original game, including the Watcom C runtime they come with. That code belongs to its rights holders, so no licence is granted for it here. This project isn't affiliated with or endorsed by them. Please buy the game.
 
 Generated for `{game}` by the recompiler in `recompiler/`.
 "#)

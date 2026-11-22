@@ -36,20 +36,33 @@ pub struct Module {
 pub(crate) fn version_in(game: &Game, place: &str) -> Option<&'static str> {
     let path = std::path::Path::new(place);
     let program = if host::disc::is_image(path) {
-        let mut disc = host::disc::Disc::open(path).ok()?;
-        let files = disc.files();
-        programs(game).into_iter().find(|program| {
-            let name = without_tag(program[0].file);
-            let places: Vec<String> = std::iter::once(name.to_string()).chain(install_folders().iter().map(|folder| format!("{folder}/{name}"))).collect();
-            let Some(entry) = places.iter().find_map(|place| files.iter().find(|entry| entry.path.eq_ignore_ascii_case(place))) else { return false };
-            disc.read(entry).is_ok_and(|data| Sha256::digest(&data).iter().map(|byte| format!("{byte:02x}")).collect::<String>() == program[0].sha256)
-        })?
+        programs_on_image(game, path).first().copied()?
     } else {
         let program = program_in(game, place);
         let path = find_file(place, program[0].file)?;
         (sha256_of(&path) == program[0].sha256).then_some(program)?
     };
     Some(program[0].name).filter(|name| !name.is_empty())
+}
+
+/// The port's programs that a disc image holds, by their contents.
+fn programs_on_image(game: &Game, image: &std::path::Path) -> Vec<&'static [Module]> {
+    let Ok(mut disc) = host::disc::Disc::open(image) else { return Vec::new() };
+    let files = disc.files();
+    let mut found = programs(game);
+    found.retain(|program| {
+        let name = without_tag(program[0].file);
+        let places: Vec<String> = std::iter::once(name.to_string()).chain(install_folders().iter().map(|folder| format!("{folder}/{name}"))).collect();
+        let Some(entry) = places.iter().find_map(|place| files.iter().find(|entry| entry.path.eq_ignore_ascii_case(place))) else { return false };
+        disc.read(entry).is_ok_and(|data| Sha256::digest(&data).iter().map(|byte| format!("{byte:02x}")).collect::<String>() == program[0].sha256)
+    });
+    found
+}
+
+/// Whether the folder has each of these programs, the same builds.
+fn holds(folder: &std::path::Path, wanted: &[&[Module]]) -> bool {
+    let folder = folder.to_string_lossy();
+    !wanted.is_empty() && wanted.iter().all(|program| program.iter().all(|module| find_file(&folder, module.file).is_some_and(|path| sha256_of(&path) == module.sha256)))
 }
 
 /// The programs a port carries: each program's module, then its DLLs.
@@ -97,12 +110,21 @@ pub(crate) fn choose_renderer(game: &Game, index: usize) {
 
 /// Whether the folder can run the renderer: always, unless the renderer is a
 /// program of its own that the folder lacks, such as Glide on the German disc,
-/// which has only the software `XA.EXE`. A disc image counts as having all,
-/// since it's only looked into when it's unpacked.
+/// which has only the software `XA.EXE`. A disc image has its own programs, or
+/// those of its unpacked copy, which a patch may have added to.
 pub(crate) fn renderer_available(game: &Game, folder: &str, index: usize) -> bool {
     let Some(file) = renderer_program(game, index) else { return index < game.renderers.len() };
-    if host::disc::is_image(std::path::Path::new(folder)) {
-        return true;
+    let path = std::path::Path::new(folder);
+    let unpacked;
+    let mut folder = folder;
+    if host::disc::is_image(path) {
+        match unpacked_copy(game, path) {
+            Some(copy) => {
+                unpacked = copy.display().to_string();
+                folder = &unpacked;
+            }
+            None => return programs_on_image(game, path).iter().any(|program| same_program(program[0].file, file)),
+        }
     }
     programs(game).iter().any(|program| same_program(program[0].file, file) && find_file(folder, program[0].file).is_some_and(|path| sha256_of(&path) == program[0].sha256))
 }
@@ -181,16 +203,50 @@ pub struct Game {
     pub install: &'static [&'static str],
     /// The CD's track layout, from `recompCdTracks`: see `cd_tracks`.
     pub cd_tracks: &'static [u32],
+    /// Exit codes besides 0 that mean the player quit, from `recompNormalExits`.
+    pub normal_exits: &'static [i32],
 }
 
 /// A program with no console would otherwise end without a word, so a crash
-/// leaves a log and tells the player.
+/// goes into `recomp.log` (and `recomp-crash.log` here, as before) and tells the player.
 fn report_crashes(title: &'static str) {
     std::panic::set_hook(Box::new(move |information| {
         let text = format!("{title} stopped with an error:\n\n{information}");
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        crate::runlog::write_panic(&format!("\n{text}\n\nbacktrace:\n{backtrace}\n"));
         let _ = std::fs::write("recomp-crash.log", &text);
-        host::video::show_error(title, &text);
+        let text = match crate::runlog::path() {
+            Some(path) => format!("{text}\n\nPlease send this file with your report:\n{}", path.display()),
+            None => text,
+        };
+        if crate::runlog::automated() {
+            eprintln!("{text}");
+        } else {
+            host::video::show_error(title, &text);
+        }
     }));
+}
+
+#[cfg(test)]
+mod crash_tests;
+
+/// What the run chose, at the top of `recomp.log`.
+fn log_settings(game: &Game, settings: &Settings, folder: &str, command: &str) {
+    let on = |list: Vec<&str>| if list.is_empty() { "none".to_string() } else { list.join(", ") };
+    crate::runlog::line(&format!("game folder: {folder}"));
+    if let Some((_, label)) = game.renderers.get(settings.renderer) {
+        crate::runlog::line(&format!("renderer: {label}"));
+    }
+    if let Some((_, label)) = game.languages.get(settings.language) {
+        crate::runlog::line(&format!("language: {label}"));
+    }
+    let switches: Vec<&str> = game.switches.iter().zip(&settings.switches).filter(|(_, on)| **on).map(|((name, _, _), _)| *name).collect();
+    crate::runlog::line(&format!("switches: {}", on(switches)));
+    let off: Vec<&str> = game.mods.iter().zip(&settings.mods).filter(|(_, on)| !**on).map(|((file, _, _, _), _)| *file).collect();
+    crate::runlog::line(&format!("mods off: {}", on(off)));
+    crate::runlog::line(&format!("scale {}, fullscreen {}, Glide on the processor {}", settings.scale, settings.fullscreen, settings.processor));
+    crate::runlog::line(&format!("command: {command}"));
+    crate::runlog::line("--- the game's output ---");
 }
 
 /// Without a path, the game folder is `game` here or beside the program, or else
@@ -266,10 +322,64 @@ pub(crate) fn check_image(game: &Game, image: &std::path::Path) -> Result<(), St
     Err(problem)
 }
 
-/// Where a disc image is unpacked: a folder named `game` beside the program,
-/// which is also where a start without any path looks first.
-pub(crate) fn unpack_target(_game: &Game) -> std::path::PathBuf {
-    host::launcher::program_folder().unwrap_or_default().join("game")
+/// Where a disc image is unpacked, and whether that's done already: `game`
+/// beside the program, which is also where a start without any path looks
+/// first, or a folder named for the version when `game` holds something else.
+pub(crate) fn unpack_target(game: &Game, image: &std::path::Path) -> (std::path::PathBuf, bool) {
+    let base = host::launcher::program_folder().unwrap_or_default();
+    target_for(&base, &programs_on_image(game, image))
+}
+
+fn target_for(base: &std::path::Path, wanted: &[&[Module]]) -> (std::path::PathBuf, bool) {
+    let plain = base.join("game");
+    let Some(first) = wanted.first() else { return (plain, false) };
+    // No dots: `disc::unpack` swaps the extension for its partial copy.
+    let version: String = first[0].name.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let named = base.join(format!("game-{version}"));
+    // A copy made earlier stays in use, with its saves, if `game` has gone since.
+    if let Some(copy) = [&plain, &named].into_iter().find(|folder| holds(folder, wanted)) {
+        return (copy.clone(), true);
+    }
+    (if plain.exists() { named } else { plain }, false)
+}
+
+/// The folder an image was unpacked to earlier, if it was.
+pub(crate) fn unpacked_copy(game: &Game, image: &std::path::Path) -> Option<std::path::PathBuf> {
+    let (folder, done) = unpack_target(game, image);
+    done.then_some(folder)
+}
+
+/// Unpacks a disc image where `unpack_target` says, unless that's done, and
+/// returns the folder. `progress` gets the bytes written so far and the total.
+pub(crate) fn unpack_image(game: &Game, image: &std::path::Path, progress: &mut dyn FnMut(u64, u64)) -> Result<String, String> {
+    check_image(game, image)?;
+    let (target, done) = unpack_target(game, image);
+    if !done {
+        if target.exists() {
+            return Err(format!("{} is in the way: it holds other files. Move or delete it.", target.display()));
+        }
+        println!("unpacking {} into {}", image.display(), target.display());
+        host::disc::unpack(image, &target, progress)?;
+        choose_cd_music(image, &target);
+    }
+    // The image's music is played from the image, so the folder keeps where it is.
+    host::cue::keep(image, &target);
+    Ok(target.display().to_string())
+}
+
+/// The folder the game runs in for what the player chose: that folder, or a
+/// disc image's unpacked copy. A folder that holds only an image stands for it.
+pub(crate) fn playable_folder(game: &Game, chosen: &str, progress: &mut dyn FnMut(u64, u64)) -> Result<String, String> {
+    let mut place = std::path::PathBuf::from(chosen);
+    if place.is_dir() && check_files(game, chosen).is_err() {
+        place = host::disc::image_in(&place).unwrap_or(place);
+    }
+    if !host::disc::is_image(&place) {
+        return Ok(chosen.to_string());
+    }
+    unpack_image(game, &place, progress).map_err(|problem| {
+        format!("{} can't use this disc image:\n{}\n\n{problem}\n\n{} needs {}.", game.title, place.display(), game.title, game.needs)
+    })
 }
 
 /// After a disc image is unpacked: CD music from the image, rather than
@@ -560,6 +670,7 @@ fn settings_from_arguments(game: &Game, arguments: &[String]) -> Settings {
 
 /// Runs the game on a thread with a host stack deep enough for its calls.
 pub fn run(game: &'static Game) {
+    crate::runlog::start(game.title, game.version, game.normal_exits, || host::launcher::settings_folder(game));
     report_crashes(game.title);
     let _ = INSTALL_FOLDERS.set(game.install);
     let _ = CD_TRACKS.set(game.cd_tracks);
@@ -596,26 +707,11 @@ pub fn run(game: &'static Game) {
     if settings.processor && std::env::var_os("RECOMP_GLIDE").is_none() {
         std::env::set_var("RECOMP_GLIDE", "cpu");
     }
-    let mut folder = settings.folder.clone();
-    // A disc image given on the command line, with no launcher to unpack it.
-    if host::disc::is_image(std::path::Path::new(&folder)) {
-        let target = unpack_target(game);
-        let unpacked = target.display().to_string();
-        if let Err(problem) = check_image(game, std::path::Path::new(&folder)) {
-            host::video::show_error(game.title, &format!("{} can't use this disc image:\n{folder}\n\n{problem}.\n\n{} needs {}.", game.title, game.title, game.needs));
-            std::process::exit(1);
-        }
-        if check_files(game, &unpacked).is_err() {
-            println!("unpacking {folder} into {unpacked}");
-            if let Err(text) = host::disc::unpack(std::path::Path::new(&folder), &target, &mut |_, _| {}) {
-                host::video::show_error(game.title, &text);
-                std::process::exit(1);
-            }
-            choose_cd_music(std::path::Path::new(&folder), &target);
-        }
-        host::cue::keep(std::path::Path::new(&folder), &target);
-        folder = unpacked;
-    }
+    // The launcher has unpacked a chosen image already; one given on the command line is unpacked here.
+    let folder = playable_folder(game, &settings.folder, &mut |_, _| {}).unwrap_or_else(|text| {
+        host::video::show_error(game.title, &text);
+        std::process::exit(1);
+    });
     // `--add-patch=FILE`: Extreme Assault's German 3dfx patch (`xa_r110.zip`), as the
     // launcher adds it. A relative FILE may also be in the game folder, as in tests.
     if let Some(file) = arguments.iter().find_map(|argument| argument.strip_prefix("--add-patch=")) {
@@ -635,6 +731,7 @@ pub fn run(game: &'static Game) {
     settings.renderer = usable_renderer(game, &folder, settings.renderer);
     choose_renderer(game, settings.renderer);
     let command: &'static str = Box::leak(command_with_choices(game, &settings).into_boxed_str());
+    log_settings(game, &settings, &folder, command);
     let Settings { switches, mods, .. } = settings;
     if let Err(text) = check_files(game, &folder) {
         host::video::show_error(game.title, &text);
@@ -648,6 +745,38 @@ pub fn run(game: &'static Game) {
     }
     let thread = std::thread::Builder::new().stack_size(HOST_STACK).spawn(move || start(game, folder, switches, mods, command));
     if thread.expect("couldn't start the game's thread").join().is_err() {
+        crate::runlog::line("the game exited with code 1 after the error above");
         std::process::exit(1);
+    }
+    crate::runlog::line("the game exited with code 0");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_image_only_reuses_its_own_version() {
+        let base = std::env::temp_dir().join("loader-test-image-version");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let module = |name: &'static str, contents: &str| {
+            let sha256 = Sha256::digest(contents.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+            [Module { file: "XA.EXE", base: 0, sha256: Box::leak(sha256.into_boxed_str()), program: true, name }]
+        };
+        let (english, german) = (module("English CD 1.1.0", "english"), module("German CD 1.0.1", "german"));
+        let (plain, named) = (base.join("game"), base.join("game-german-cd-1-0-1"));
+
+        assert_eq!(target_for(&base, &[&german]), (plain.clone(), false));
+        std::fs::create_dir_all(&plain).unwrap();
+        std::fs::write(plain.join("XA.EXE"), "english").unwrap();
+        assert_eq!(target_for(&base, &[&english]), (plain.clone(), true));
+        assert_eq!(target_for(&base, &[&german]), (named.clone(), false));
+        std::fs::create_dir_all(&named).unwrap();
+        std::fs::write(named.join("XA.EXE"), "german").unwrap();
+        assert_eq!(target_for(&base, &[&german]), (named.clone(), true));
+        std::fs::remove_dir_all(&plain).unwrap();
+        assert_eq!(target_for(&base, &[&german]), (named, true));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

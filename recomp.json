@@ -2,7 +2,7 @@
   "name": "extreme-assault",
   "title": "Extreme Assault",
   "needs": "Extreme Assault by Blue Byte: the English CD (version E 1.1.0), the German CD (R 1.0.1), or a copy patched to version 1.23",
-  "recompVersion": "0.55-beta",
+  "recompVersion": "0.56-beta",
   "recompRepo": "retro-gaming-tools/xa-rust",
   "recompCommand": "XA_3DFX.EXE",
   "recompSwitches": {

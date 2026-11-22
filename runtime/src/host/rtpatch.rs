@@ -172,10 +172,40 @@ pub fn apply_to(folder: &str, patch: &[u8]) -> Result<usize, String> {
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
         }
+        // The German software program (1.0.1) stops on the patched text files
+        // ("TextNr to High"), so an installed original is kept beside them.
+        if file.old_sha256.is_some() && target.exists() {
+            let kept = keep_path(&target);
+            if !kept.exists() {
+                std::fs::copy(&target, &kept).map_err(|error| format!("{}: {error}", kept.display()))?;
+            }
+        }
         std::fs::write(&target, &bytes).map_err(|error| format!("{}: {error}", target.display()))?;
         written += 1;
     }
     Ok(written)
+}
+
+/// Where an installed file the patch changes is kept: `GFX.CHR` → `GFX.CHR.101`.
+fn keep_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".101");
+    path.with_file_name(name)
+}
+
+/// For the German disc's software program, which only knows 1.0.1's files:
+/// the original of a file the patch changed, when `path` holds the patched one.
+/// It's the copy `apply_to` kept, or the disc's own in `EXTREME`.
+pub fn original_for_software(folder: &Path, path: &Path) -> Option<PathBuf> {
+    let relative = path.strip_prefix(folder).ok()?.to_string_lossy().replace('\\', "/");
+    let file = FILES.iter().find(|file| file.old_sha256.is_some() && file.path.eq_ignore_ascii_case(&relative))?;
+    if !std::fs::read(path).is_ok_and(|bytes| sha256(&bytes) == file.sha256) {
+        return None;
+    }
+    let kept = keep_path(path);
+    let disc = find(folder, &format!("EXTREME/{}", file.path));
+    [Some(kept), disc].into_iter().flatten()
+        .find(|candidate| std::fs::read(candidate).is_ok_and(|bytes| Some(sha256(&bytes).as_str()) == file.old_sha256))
 }
 
 // Zip, for the self-extracting XA_R110.EXE: its local headers are found by

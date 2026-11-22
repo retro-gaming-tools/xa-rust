@@ -20,6 +20,13 @@ pub(crate) fn host_path(cpu: &Cpu, guest: &str) -> PathBuf {
     let relative = lower.strip_prefix("c:/game/").or(lower.strip_prefix("c:/game")).map(|r| &text[text.len() - r.len()..]);
     let relative = relative.unwrap_or_else(|| text.strip_prefix("./").unwrap_or(&text)).trim_start_matches('/');
     let path = resolve(&cpu.host.folder, relative);
+    // The German software program on a folder with the 3dfx patch reads the
+    // text files it was made for, not the patch's longer ones.
+    if cpu.host.modules.first().is_some_and(|module| module.name.eq_ignore_ascii_case("XA.EXE")) {
+        if let Some(original) = crate::host::rtpatch::original_for_software(&cpu.host.folder, &path) {
+            return original;
+        }
+    }
     // On an unpacked disc, a file the installer would have copied into the
     // game's folder is still in its folder on the disc.
     if !path.exists() && !relative.is_empty() {
@@ -462,7 +469,7 @@ pub fn find(name: &str) -> Option<GuestFn> {
         "IsBadCodePtr" 1 |_cpu| { 0 }
         "Sleep" 1 |cpu| { super::sleep(cpu, std::time::Duration::from_millis(cpu.arg(0) as u64)); 0 }
         "Beep" 2 |_cpu| { 1 }
-        "ExitProcess" 1 |cpu| { println!("the game exited with code {}", cpu.arg(0)); std::process::exit(cpu.arg(0) as i32) }
+        "ExitProcess" 1 |cpu| { crate::runlog::exit(cpu.arg(0) as i32) }
         "TerminateProcess" 2 |cpu| { println!("the game ended itself with code {}", cpu.arg(1)); std::process::exit(cpu.arg(1) as i32) }
 
         "GetTickCount" 0 |cpu| { tick_count(cpu) }

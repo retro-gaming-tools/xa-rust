@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "extreme-assault-rust"
-version = "0.55.0-beta"
+version = "0.56.0-beta"
 dependencies = [
  "extreme-assault-code-xa",
  "extreme-assault-code-xa_1_1",

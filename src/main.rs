@@ -38,6 +38,7 @@ static GAME: loader::Game = loader::Game {
     cd: "EXTREME",
     install: &["EXTREME/ROOT", "EXTREME"],
     cd_tracks: &[0, 77466, 91657, 104482, 115112, 129533, 143062, 156293, 169805, 186273, 205881, 222628, 238577, 246942, 254289, 255151, 263708, 264650, 280577, 282047, 296689],
+    normal_exits: &[39],
 };
 
 fn main() {
