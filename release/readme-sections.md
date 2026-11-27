@@ -2,7 +2,7 @@
 
 ![The launcher](release/launcher.png)
 
-The launcher opens before the game. Your choices are saved in `settings.ini` beside the program (beside the `.AppImage` file on Linux), and `--play` on the command line skips the launcher.
+The launcher opens before the game. Your choices are saved in `extreme-assault-rust.settings.ini` beside the program (beside the `.AppImage` file on Linux), and `--play` on the command line skips the launcher.
 
 - **Game files**: where your copy of the game is. Click *Choose folder...* or press Enter to pick a folder, or drop a folder or disc image onto the window. The line below it says which version was found, or what's missing.
 - **Choose a disc image or game file**: pick a disc image or any file of the game.
@@ -10,6 +10,8 @@ The launcher opens before the game. Your choices are saved in `settings.ini` bes
 - **3D resolution**: the size the Glide renderer draws the 3D view at, from the original 640 x 480 upwards. With the Software renderer it's greyed out.
 - **Display**: *Window* or *Fullscreen*.
 - **Renderer**: *Glide* (`XA_3DFX.EXE`, drawn by the port) or *Software* (`XA.EXE`, the game's own renderer). Renderers the chosen copy doesn't have are skipped, such as Glide on the German disc.
+- **Skip launcher next time**: *On* starts the game straight away from then on. `--launcher` on the command line, or Shift held while the port starts, brings the launcher back.
+- **Hotkeys...**: change the port's own keys (fullscreen, frame counter): choose a row, press the new key; Delete, Backspace or X turns a hotkey off, and *Reset to defaults* brings back F11 and F10.
 - **Advanced settings...** opens a second page, described below.
 - **Start game** and **Quit**.
 
@@ -18,11 +20,12 @@ The launcher opens before the game. Your choices are saved in `settings.ini` bes
 The defaults suit most machines. *Back* or Escape returns to the first page.
 
 - **3D drawn by**: *GPU (OpenGL)* (the default) or *CPU*, for Glide.
+- **Texture filtering**: anisotropic filtering on the graphics card, *Off* or *2x* to *16x* (the default), for sharper ground at steep angles. Greyed out when the CPU draws.
 - **Only 256-colour modes**, **Only low resolutions** and **Fixed texture memory**: the original's start-up options, described under *Supported versions*. Off by default.
 
 The launcher works with the mouse, the keyboard (arrow keys to choose and change, Enter to confirm, Escape to quit) and a controller (d-pad to choose and change, A to confirm, Start to start the game, B to quit).
 
-In the game, **F11** switches between fullscreen and a window, and **F10** shows or hides a frame counter. The port starts in fullscreen unless the launcher's Display row says Window.
+In the game, **F11** switches between fullscreen and a window, and **F10** shows or hides a frame counter. The port starts in fullscreen unless the launcher's Display row says Window. **The hotkeys belong to the port**: the game never sees them, so they can't be used for anything in the game. Move or turn them off with the launcher's *Hotkeys...* row if you need those keys.
 
 ## Supported versions
 
@@ -33,6 +36,19 @@ The game came as two programs: `XA_3DFX.EXE` for 3Dfx (Glide) cards and `XA.EXE`
 | English CD, E 1.1.0 | `7abb3557…` | `746bb06b…` | The English disc, as a disc image (`.cue`/`.bin`) or its files |
 | Patched 1.23 / 1.22 | `c24019df…` (1.23) | `952c865f…` (1.22) | An installed game with Blue Byte's updates applied |
 | German CD, R 1.0.1 | `24f23a78…` (R 1.1.0, from the 3Dfx patch) | `e69a0492…` | The German disc, as a disc image or its files; for Glide, with the German 3Dfx patch added |
+
+The full SHA-256 values:
+
+| Version | Program | SHA-256 |
+|---|---|---|
+| English CD, E 1.1.0 | `XA_3DFX.EXE` | `7abb3557fa36c5425e6b6f5cf2d630609e3c4edce229cd20d84bd5bb7aa224bb` |
+| English CD, E 1.1.0 | `XA.EXE` | `746bb06b1a1ac1e7ea15a1b64ccdb469048ecfd6084d6cec810a25c139519a7c` |
+| Patched 1.23 | `XA_3DFX.EXE` | `c24019dfd7641911cc090f58d0cd663772394d44cd770be4e5bed8969cc7e67b` |
+| Patched 1.22 | `XA.EXE` | `952c865f2fcbb0abf1f7ecdb3f9e0433f0db837cf92381c3e97bd5395eeb35fb` |
+| German 3Dfx patch, R 1.1.0 | `XA_3DFX.EXE` | `24f23a78015595cd8b53c04e3a3bf96a48d055f18fc0c29faecc6df1c947f000` |
+| German CD, R 1.0.1 | `XA.EXE` | `e69a049251c8ade591adb5e5ee02fed8b05d3313ba86ab4e6cd02408fbefd725` |
+
+To see your program's value, open a terminal in the folder that holds it and run `sha256sum XA.EXE` (Linux), `Get-FileHash XA.EXE` (Windows PowerShell) or `certutil -hashfile XA.EXE SHA256` (Windows Command Prompt), and the same for `XA_3DFX.EXE`. `extreme-assault-rust.log`, beside the port's program, also lists the value of each program the port checked, from a folder or a disc image.
 
 The German disc has no Glide program of its own: the launcher adds the one from Blue Byte's German 3Dfx patch. Other patch levels and other languages' discs aren't supported: their programs differ, and the launcher says which version it found.
 
@@ -84,4 +100,4 @@ A disc image is unpacked once, into a `game` folder beside the program, or into 
 - No network play or force feedback.
 - The picture is 4:3.
 
-If something doesn't work, please open an issue and attach `recomp.log`, which is beside the program (beside the `.AppImage` file on Linux). After starting again, it's `recomp-previous.log`.
+If something doesn't work, please open an issue and attach `extreme-assault-rust.log`, which is beside the program (beside the `.AppImage` file on Linux). After starting again, it's `extreme-assault-rust-previous.log`.

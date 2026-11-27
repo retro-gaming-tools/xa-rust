@@ -103,6 +103,8 @@ impl Player {
             scale: 3,
             fullscreen: false,
             processor: false,
+            xdg: false,
+            skip_launcher: false,
             switches: Vec::new(),
             renderer: GLIDE,
             language: 0,

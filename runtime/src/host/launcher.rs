@@ -4,7 +4,7 @@
 //! 8x8 font, works with the mouse, the keyboard and a controller, and keeps the
 //! choices for next time.
 
-use crate::host::disc;
+use crate::host::{disc, hotkeys};
 use crate::host::video::{symbol, Event};
 use crate::loader::{self, Game, Settings};
 use crate::sys;
@@ -35,6 +35,9 @@ const KEY_DOWN: u32 = 0x4000_0051;
 const KEY_UP: u32 = 0x4000_0052;
 const BUTTON_SOUTH: u8 = 0;
 const BUTTON_EAST: u8 = 1;
+const BUTTON_WEST: u8 = 2;
+const KEY_BACKSPACE: u32 = 8;
+const KEY_DELETE: u32 = 0x7f;
 const BUTTON_START: u8 = 6;
 const BUTTON_UP: u8 = 11;
 const BUTTON_DOWN: u8 = 12;
@@ -75,8 +78,25 @@ const LAST_SCALE: u32 = 6;
 /// An organisation name for the settings folder, shared by every recompiled game.
 const SETTINGS_OWNER: &str = "Recompiled Games";
 const USER_SETTINGS_FILE: &str = "launcher.ini";
-/// Beside the program.
-const SETTINGS_FILE: &str = "settings.ini";
+/// The shared name earlier builds kept beside the program; read only when the program's own
+/// file isn't there yet, so its settings carry over.
+const OLD_SETTINGS_FILE: &str = "settings.ini";
+
+/// The started program's name without its extension (`z-rust`), so that two ports' programs
+/// in one folder keep their own settings and logs. Inside an AppImage this is the program in
+/// the mount, whose name stays the same from one release to the next.
+pub(crate) fn program_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|program| program.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| "recomp".to_string())
+}
+
+/// The settings file beside the program: `<program>.settings.ini`.
+fn settings_file() -> String {
+    format!("{}.settings.ini", program_name())
+}
 /// Marks a settings file as the launcher's, so a game's own file of that name is never overwritten.
 const SETTINGS_HEADER: &str = "; Launcher settings for this recompiled game\n";
 
@@ -92,6 +112,79 @@ pub fn wanted(arguments: &[String]) -> bool {
     let scripted = std::env::var("RECOMP_SCRIPT").is_ok_and(|script| !script.trim().is_empty());
     let play = arguments.iter().any(|argument| argument.eq_ignore_ascii_case("--play"));
     !play && !scripted && std::env::var_os("RECOMP_HEADLESS").is_none()
+}
+
+/// Whether this start skips the launcher, as its "Skip launcher next time" row chose, and if so
+/// fills `settings` with what was saved. The launcher still opens with `--launcher`, with Shift
+/// held as the program starts, and when the saved game folder no longer checks out.
+pub fn skipped(game: &Game, arguments: &[String], settings: &mut Settings) -> bool {
+    if arguments.iter().any(|argument| argument.eq_ignore_ascii_case("--launcher")) {
+        return false;
+    }
+    let gave_folder = arguments.iter().any(|argument| !argument.starts_with("--"));
+    load(game, settings, gave_folder);
+    if !settings.skip_launcher {
+        return false;
+    }
+    if shift_held() {
+        note("Shift held: showing the launcher");
+        return false;
+    }
+    let (status, ok) = folder_status(game, &settings.folder);
+    if !ok {
+        note(&format!("launcher skipping is on, but the game folder no longer checks out ({status}): showing it"));
+        return false;
+    }
+    // A disc image or a read-only folder needs the launcher to unpack or copy it.
+    let path = std::path::Path::new(&settings.folder);
+    if disc::is_image(path) || !disc::is_writable(path) {
+        return false;
+    }
+    settings.renderer = loader::usable_renderer(game, &settings.folder, settings.renderer);
+    note("skipped, as chosen; --launcher or Shift at start brings it back");
+    note_settings(game, settings);
+    true
+}
+
+/// Whether a Shift key is held now, before any window of ours is open.
+fn shift_held() -> bool {
+    #[cfg(windows)]
+    {
+        extern "system" {
+            fn GetAsyncKeyState(key: i32) -> i16;
+        }
+        const VK_SHIFT: i32 = 0x10;
+        unsafe { GetAsyncKeyState(VK_SHIFT) < 0 }
+    }
+    #[cfg(not(windows))]
+    unsafe {
+        // SDL knows the keyboard only for a window that has the focus, so on Linux this
+        // finds Shift only where the system tells SDL at once; `--launcher` always works.
+        let library = sys::open_sdl();
+        if library.is_null() {
+            return false;
+        }
+        let init: unsafe extern "C" fn(u32) -> bool = symbol(library, "SDL_Init");
+        if !init(INIT_VIDEO) {
+            return false;
+        }
+        let pump: unsafe extern "C" fn() = symbol(library, "SDL_PumpEvents");
+        let modifiers: unsafe extern "C" fn() -> u16 = symbol(library, "SDL_GetModState");
+        pump();
+        const SHIFT: u16 = 0x0003;
+        modifiers() & SHIFT != 0
+    }
+}
+
+/// Reads the hotkeys from the saved settings, for every start, the launcher's or not.
+pub fn load_hotkeys(game: &Game) {
+    let beside = read_beside_program();
+    let Some(text) = beside.or_else(|| settings_path(game).and_then(|path| std::fs::read_to_string(path).ok())) else { return };
+    for line in text.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            hotkeys::read_setting(key.trim(), value);
+        }
+    }
 }
 
 /// A step of the launcher in `recomp.log`, written at once in case the next one crashes.
@@ -132,6 +225,13 @@ enum Row {
     Language,
     Switch(usize),
     Mod(usize),
+    /// Where settings, `recomp.log` and unpacked discs go: beside the program or in the XDG
+    /// folders (Linux only).
+    Files,
+    /// Whether later starts go straight into the game. Offered once the game folder checks out.
+    SkipLauncher,
+    /// Opens the page where the port's own keys are chosen.
+    Hotkeys,
     /// Opens the page of settings most players should leave alone.
     Advanced,
     /// Leaves that page.
@@ -151,6 +251,12 @@ fn game_place(game: &Game, picked: &str) -> String {
     }
     let folder = if path.is_dir() { path.to_path_buf() } else { path.parent().map(|p| p.to_path_buf()).unwrap_or_default() };
     let passes = |folder: &std::path::Path| loader::check_files(game, &folder.to_string_lossy()).is_ok();
+    // A mounted CD or DVD whose game is somewhere on it stands for its drive.
+    if !passes(&folder) {
+        if let Some(drive) = loader::disc_drive(&folder).filter(|drive| loader::check_image(game, drive).is_ok()) {
+            return drive.display().to_string();
+        }
+    }
     // A folder that holds only the disc image, such as a `.bin` and its `.cue`.
     if !passes(&folder) {
         if let Some(image) = disc::image_in(&folder).filter(|image| disc::Disc::open(image).is_ok()) {
@@ -185,6 +291,9 @@ fn prepare_start(game: &Game, settings: &Settings, progress: &mut dyn FnMut(u64,
     if disc::is_image(chosen) {
         loader::unpack_image(game, chosen, progress)?;
     }
+    // A game folder that can't be written to, such as a mounted disc, is copied: the game
+    // saves beside its files. The disc stays the choice, and `loader::run` finds the copy.
+    loader::copy_read_only(game, &settings.folder, progress)?;
     Ok(())
 }
 
@@ -452,10 +561,14 @@ fn folder_status(game: &Game, folder: &str) -> (String, bool) {
         };
     }
     match loader::check_files(game, folder) {
-        Ok(()) => match loader::version_in(game, folder) {
-            Some(name) => (format!("Found: {name}"), true),
-            None => ("Game files found".to_string(), true),
-        },
+        Ok(()) => {
+            let disc = if disc::is_writable(std::path::Path::new(folder)) { "" } else { ", on disc" };
+            match loader::version_in(game, folder) {
+                Some(name) => (format!("Found: {name}{disc}"), true),
+                None if disc.is_empty() => ("Game files found".to_string(), true),
+                None => ("Game found on disc, copied at start".to_string(), true),
+            }
+        }
         Err(text) => {
             let problem = text.lines().find(|line| line.starts_with("Missing") || line.starts_with("From a different")).unwrap_or("Game files not found");
             // A long list doesn't fit, and names a wrong folder better than any file does.
@@ -534,11 +647,108 @@ pub(crate) fn program_folder() -> Option<std::path::PathBuf> {
     program.parent().map(|folder| folder.to_path_buf())
 }
 
-/// Where the settings go: beside the program, unless a game's own file of that name is there.
+/// The XDG folders for settings and for data (`recomp.log`, unpacked discs), when the player
+/// chose them; `None` keeps everything beside the program (the portable default).
+static XDG: Mutex<Option<(std::path::PathBuf, std::path::PathBuf)>> = Mutex::new(None);
+
+fn xdg() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    XDG.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+}
+
+/// Whether the launcher offers the choice of where files go: only Linux has XDG folders.
+const XDG_OFFERED: bool = cfg!(target_os = "linux");
+
+/// The XDG base folder from `variable`, or `fallback` under the home folder, as the spec says:
+/// a relative path in the variable is ignored.
+fn xdg_base(variable: &str, fallback: &str) -> Option<std::path::PathBuf> {
+    let set = std::env::var_os(variable).map(std::path::PathBuf::from).filter(|path| path.is_absolute());
+    set.or_else(|| Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join(fallback)))
+}
+
+/// `$XDG_CONFIG_HOME/<game>-rust` and `$XDG_DATA_HOME/<game>-rust`, on Linux.
+fn xdg_paths(game: &Game) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    if !XDG_OFFERED {
+        return None;
+    }
+    let name = format!("{}-rust", game.title.to_lowercase().replace(' ', "-"));
+    Some((xdg_base("XDG_CONFIG_HOME", ".config")?.join(&name), xdg_base("XDG_DATA_HOME", ".local/share")?.join(&name)))
+}
+
+/// Linux only: the launcher's "Files kept" row, or `--xdg`, keeps the settings in
+/// `$XDG_CONFIG_HOME/<game>-rust` and the data in `$XDG_DATA_HOME/<game>-rust`, for an
+/// AppImage kept in a shared folder such as an AppImage manager's. Our `settings.ini` in
+/// that settings folder is what keeps the choice for later starts. Called once at the
+/// start, before anything is written.
+pub(crate) fn choose_folders(game: &Game, arguments: &[String]) {
+    let asked = arguments.iter().any(|argument| argument.eq_ignore_ascii_case("--xdg"));
+    let Some((config, _)) = xdg_paths(game) else { return };
+    let chosen = [settings_file(), OLD_SETTINGS_FILE.to_string()]
+        .iter()
+        .any(|name| std::fs::read_to_string(config.join(name)).is_ok_and(|text| text.starts_with(SETTINGS_HEADER)));
+    if asked || chosen {
+        set_xdg(game, true);
+    }
+}
+
+/// Switches between the XDG folders and the program's. The XDG ones are made, and a
+/// `settings.ini` with only the header marks the choice until the settings are saved there.
+/// Switching back removes that `settings.ini` and the folder if it's then empty; the data
+/// folder, with any unpacked discs, is left alone.
+fn set_xdg(game: &Game, on: bool) {
+    let Some((config, data)) = xdg_paths(game) else { return };
+    let marker = config.join(settings_file());
+    if on {
+        let made = std::fs::create_dir_all(&config).is_ok() && std::fs::create_dir_all(&data).is_ok();
+        if made && (marker.exists() || std::fs::write(&marker, SETTINGS_HEADER).is_ok()) {
+            *XDG.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((config, data));
+        } else {
+            note(&format!("couldn't make {} and {}: files stay beside the program", config.display(), data.display()));
+        }
+    } else {
+        *XDG.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        for marker in [marker, config.join(OLD_SETTINGS_FILE)] {
+            if std::fs::read_to_string(&marker).is_ok_and(|text| text.starts_with(SETTINGS_HEADER)) {
+                let _ = std::fs::remove_file(&marker);
+            }
+        }
+        let _ = std::fs::remove_dir(&config);
+    }
+}
+
+/// Whether the XDG folders are in use.
+pub(crate) fn xdg_on() -> bool {
+    xdg().is_some()
+}
+
+/// Where the port's own files go: `recomp.log` and unpacked or copied discs. Beside the
+/// program, or the XDG data folder.
+pub(crate) fn files_folder() -> Option<std::path::PathBuf> {
+    match xdg() {
+        Some((_, data)) => Some(data),
+        None => program_folder(),
+    }
+}
+
+/// Where the settings go: beside the program (or in the XDG settings folder),
+/// unless a game's own file of that name is there.
 fn settings_beside_program() -> Option<std::path::PathBuf> {
-    let path = program_folder()?.join(SETTINGS_FILE);
+    let folder = match xdg() {
+        Some((config, _)) => config,
+        None => program_folder()?,
+    };
+    let path = folder.join(settings_file());
     let ours = std::fs::read_to_string(&path).map_or(!path.exists(), |text| text.starts_with(SETTINGS_HEADER));
     ours.then_some(path)
+}
+
+/// The saved settings beside the program (or in the XDG settings folder): the program's own
+/// file, else the shared `settings.ini` of earlier builds when it's the launcher's.
+fn read_beside_program() -> Option<String> {
+    let path = settings_beside_program()?;
+    std::fs::read_to_string(&path).ok().or_else(|| {
+        let old = std::fs::read_to_string(path.with_file_name(OLD_SETTINGS_FILE)).ok()?;
+        old.starts_with(SETTINGS_HEADER).then_some(old)
+    })
 }
 
 /// SDL's settings folder for the game, used when the program's folder can't be written, and
@@ -571,7 +781,7 @@ pub(crate) fn settings_folder(game: &Game) -> Option<std::path::PathBuf> {
 fn load(game: &Game, settings: &mut Settings, arguments_gave_folder: bool) {
     let arguments_gave_renderer = std::env::args().any(|argument| argument.starts_with("--renderer="));
     let arguments_gave_language = std::env::args().any(|argument| argument.starts_with("--language="));
-    let beside = settings_beside_program().and_then(|path| std::fs::read_to_string(path).ok());
+    let beside = read_beside_program();
     let Some(text) = beside.or_else(|| settings_path(game).and_then(|path| std::fs::read_to_string(path).ok())) else { return };
     for line in text.lines() {
         let Some((key, value)) = line.split_once('=') else { continue };
@@ -579,6 +789,8 @@ fn load(game: &Game, settings: &mut Settings, arguments_gave_folder: bool) {
             "folder" if !arguments_gave_folder && !value.trim().is_empty() => settings.folder = value.trim().to_string(),
             "scale" => settings.scale = value.trim().parse().unwrap_or(settings.scale).clamp(FIRST_SCALE, LAST_SCALE),
             "fullscreen" => settings.fullscreen = value.trim() == "1",
+            "skip_launcher" => settings.skip_launcher = value.trim() == "1",
+            name if hotkeys::read_setting(name, value) => {}
             "drawing" if !std::env::args().any(|argument| argument.starts_with("--drawing=")) => settings.processor = value.trim() == "processor",
             "renderer" if !arguments_gave_renderer => settings.renderer = loader::find_choice(game.renderers, value.trim()).unwrap_or(settings.renderer),
             "language" if !arguments_gave_language => settings.language = loader::find_choice(game.languages, value.trim()).unwrap_or(settings.language),
@@ -615,6 +827,14 @@ fn save(game: &Game, settings: &Settings) {
     for ((file, ..), on) in game.mods.iter().zip(&settings.mods) {
         text.push_str(&format!("mod.{file}={}\n", *on as u8));
     }
+    text.push_str(&format!("skip_launcher={}\n", settings.skip_launcher as u8));
+    text.push_str(&hotkeys::setting_lines());
+    // The "Files kept" row moves the settings, and later logs and unpacked discs; this run's
+    // log stays where it was opened.
+    if settings.xdg != xdg_on() {
+        note(&format!("files kept {}", if settings.xdg { "in the XDG folders" } else { "beside the program" }));
+        set_xdg(game, settings.xdg);
+    }
     // A folder such as Program Files can refuse the write.
     let written = settings_beside_program().is_some_and(|path| std::fs::write(path, &text).is_ok());
     if !written {
@@ -647,6 +867,9 @@ fn rows(game: &Game, advanced: bool, folder: &str) -> Vec<Row> {
     let switches = |on_advanced: bool| (0..game.switches.len()).filter(move |index| switch_label(game, *index).1 == on_advanced).map(Row::Switch);
     more.extend(switches(true));
     more.extend(mods(true));
+    if XDG_OFFERED {
+        more.push(Row::Files);
+    }
     if advanced {
         more.push(Row::Back);
         return more;
@@ -666,6 +889,8 @@ fn rows(game: &Game, advanced: bool, folder: &str) -> Vec<Row> {
     }
     rows.extend(switches(false));
     rows.extend(mods(false));
+    // Hotkeys sit on the first page, just above Advanced (user, 2026-11-26).
+    rows.extend([Row::SkipLauncher, Row::Hotkeys]);
     if !more.is_empty() {
         rows.push(Row::Advanced);
     }
@@ -793,8 +1018,15 @@ fn draw(sdl: &Sdl, game: &Game, settings: &Settings, status: &(String, bool), wa
                 sdl.write(left, line, PATCH_LABEL, TEXT);
                 sdl.write_right(line, PATCH_ACTION, DIM);
             }
-            Row::Scale | Row::Drawing | Row::Display | Row::Renderer | Row::Language | Row::Switch(_) | Row::Mod(_) => {
+            Row::SkipLauncher if !status.1 => {
+                // Offered only once the game folder checks out.
+                sdl.write(left, line, "Skip launcher next time", DIM);
+                sdl.write_right(line, "Off", DIM);
+            }
+            Row::Scale | Row::Drawing | Row::Display | Row::Renderer | Row::Language | Row::Switch(_) | Row::Mod(_) | Row::Files | Row::SkipLauncher => {
                 let label = match row {
+                    Row::Files => "Files kept",
+                    Row::SkipLauncher => "Skip launcher next time",
                     Row::Scale => "3D resolution",
                     Row::Drawing => "3D drawn by",
                     Row::Display => "Display",
@@ -822,9 +1054,10 @@ fn draw(sdl: &Sdl, game: &Game, settings: &Settings, status: &(String, bool), wa
                 let colour = if status.1 { GOOD } else { DIM };
                 sdl.write((WIDTH - label.len() as f32 * CHARACTER) / 2.0, line, label, colour);
             }
-            Row::Advanced | Row::Back | Row::Quit => {
+            Row::Advanced | Row::Hotkeys | Row::Back | Row::Quit => {
                 let label = match row {
                     Row::Advanced => "Advanced settings...",
+                    Row::Hotkeys => "Hotkeys...",
                     Row::Back => "Back",
                     _ => "Quit",
                 };
@@ -921,6 +1154,8 @@ fn value_text(game: &Game, row: Row, settings: &Settings) -> Option<String> {
         Row::Language => game.languages.get(settings.language)?.1.to_string(),
         Row::Switch(switch) => (if settings.switches[switch] { "On" } else { "Off" }).to_string(),
         Row::Mod(index) => (if settings.mods[index] { "On" } else { "Off" }).to_string(),
+        Row::Files => (if settings.xdg { "Home (XDG)" } else { "Beside program" }).to_string(),
+        Row::SkipLauncher => (if settings.skip_launcher { "On" } else { "Off" }).to_string(),
         _ => return None,
     };
     Some(format!("< {value} >"))
@@ -985,11 +1220,137 @@ fn change(sdl: &Sdl, game: &Game, row: Row, step: i32, settings: &mut Settings, 
         }
         Row::Switch(index) => settings.switches[index] = !settings.switches[index],
         Row::Mod(index) => settings.mods[index] = !settings.mods[index],
+        Row::Files => settings.xdg = !settings.xdg,
+        Row::SkipLauncher if ready => settings.skip_launcher = !settings.skip_launcher,
+        Row::Hotkeys if step == 0 => hotkey_page(sdl, game),
         Row::Start if step == 0 && ready => return Some(true),
         Row::Quit if step == 0 => return Some(false),
         _ => {}
     }
     None
+}
+
+/// The "Hotkeys..." page: one row per key the port adds, then "Reset to defaults" and
+/// "Back". Enter or a click on a row waits for the next key, which becomes that hotkey's;
+/// Escape cancels the wait, or leaves the page. The keys are saved with the other settings
+/// when the game starts.
+fn hotkey_page(sdl: &Sdl, game: &Game) {
+    let count = hotkeys::HOTKEYS.len() + 2;
+    let (reset, back) = (count - 2, count - 1);
+    let mut selected = 0;
+    let mut waiting = false;
+    let mut event = Event([0; 128]);
+    loop {
+        while unsafe { (sdl.poll)(&mut event) } {
+            unsafe { (sdl.convert)(sdl.renderer, &mut event) };
+            let kind = event.u32_at(0);
+            if waiting {
+                if kind == EVENT_KEY_DOWN {
+                    let key = event.u32_at(28);
+                    if key != KEY_ESCAPE {
+                        hotkeys::set(selected, key);
+                        note(&format!("hotkey {} set to {}", hotkeys::HOTKEYS[selected].name, hotkeys::display_name(key)));
+                    }
+                    waiting = false;
+                } else if kind == EVENT_GAMEPAD_BUTTON_DOWN && event.0[20] == BUTTON_EAST {
+                    waiting = false;
+                } else if kind == EVENT_QUIT {
+                    return;
+                }
+                continue;
+            }
+            // Delete, Backspace or X turns the chosen hotkey off: no key triggers it.
+            let clear = match kind {
+                EVENT_KEY_DOWN => matches!(event.u32_at(28), KEY_DELETE | KEY_BACKSPACE),
+                EVENT_GAMEPAD_BUTTON_DOWN => event.0[20] == BUTTON_WEST,
+                _ => false,
+            };
+            if clear && selected < reset {
+                hotkeys::set(selected, hotkeys::NONE);
+                note(&format!("hotkey {} turned off", hotkeys::HOTKEYS[selected].name));
+                continue;
+            }
+            // (movement, press, leave)
+            let action = match kind {
+                EVENT_QUIT => return,
+                EVENT_KEY_DOWN => match event.u32_at(28) {
+                    KEY_UP => Some((-1, false, false)),
+                    KEY_DOWN => Some((1, false, false)),
+                    KEY_RETURN | KEY_SPACE => Some((0, true, false)),
+                    KEY_ESCAPE => Some((0, false, true)),
+                    _ => None,
+                },
+                EVENT_GAMEPAD_BUTTON_DOWN => match event.0[20] {
+                    BUTTON_UP => Some((-1, false, false)),
+                    BUTTON_DOWN => Some((1, false, false)),
+                    BUTTON_SOUTH => Some((0, true, false)),
+                    BUTTON_EAST | BUTTON_START => Some((0, false, true)),
+                    _ => None,
+                },
+                EVENT_MOUSE_MOTION | EVENT_MOUSE_BUTTON_DOWN => {
+                    let (x, y) = (event.f32_at(28), event.f32_at(32));
+                    let hit = (0..count).find(|index| {
+                        let (top, height) = place(*index, count, true);
+                        (MARGIN..WIDTH - MARGIN).contains(&x) && (top..top + height).contains(&y)
+                    });
+                    hit.and_then(|index| {
+                        selected = index;
+                        (kind == EVENT_MOUSE_BUTTON_DOWN).then_some((0, true, false))
+                    })
+                }
+                _ => None,
+            };
+            let Some((movement, press, leave)) = action else { continue };
+            if leave || (press && selected == back) {
+                return;
+            }
+            if movement != 0 {
+                selected = (selected as i32 + movement).rem_euclid(count as i32) as usize;
+            } else if press && selected == reset {
+                hotkeys::reset();
+                note("hotkeys reset");
+            } else if press {
+                waiting = true;
+            }
+        }
+        unsafe {
+            sdl.color(BACKGROUND);
+            (sdl.clear)(sdl.renderer);
+        }
+        draw_frame(sdl);
+        let title = game.title.to_uppercase();
+        let rest = format!(" - RUST - {}", game.version);
+        let left = (WIDTH - (title.len() + rest.len()) as f32 * CHARACTER) / 2.0;
+        sdl.write(left, 12.0, &title, VALUE);
+        sdl.write(left + title.len() as f32 * CHARACTER, 12.0, &rest, DIM);
+        let left = MARGIN + 4.0;
+        sdl.write(left, FOLDER_TOP + 4.0, "Hotkeys", TEXT);
+        sdl.write(left, FOLDER_TOP + 17.0, "The keys this port adds.", DIM);
+        sdl.write(left, FOLDER_TOP + 30.0, "Move one that clashes with the game.", DIM);
+        let keys = hotkeys::all();
+        for index in 0..count {
+            let (top, height) = place(index, count, true);
+            let area = [MARGIN, top, WIDTH - 2.0 * MARGIN, height];
+            sdl.rect(area, if index == selected { SELECTED } else { PANEL }, true);
+            if index == selected {
+                sdl.rect(area, BORDER, false);
+                sdl.rect([MARGIN, top, 2.0, height], ACCENT, true);
+            }
+            let line = top + (height - CHARACTER) / 2.0;
+            if index < reset {
+                sdl.write(left, line, hotkeys::HOTKEYS[index].label, TEXT);
+                let value = if waiting && index == selected { "Press a key".to_string() } else { hotkeys::display_name(keys[index]) };
+                sdl.write_right(line, &value, VALUE);
+            } else {
+                let label = if index == reset { "Reset to defaults" } else { "Back" };
+                sdl.write((WIDTH - label.len() as f32 * CHARACTER) / 2.0, line, label, TEXT);
+            }
+        }
+        let hint = if waiting { "Press the new key, Esc to cancel" } else { "Enter: change  Del/X: none  Esc: back" };
+        sdl.write((WIDTH - hint.len() as f32 * CHARACTER) / 2.0, HEIGHT - 20.0, hint, DIM);
+        unsafe { (sdl.present)(sdl.renderer) };
+        unsafe { (sdl.delay)(FRAME_MILLISECONDS) };
+    }
 }
 
 pub fn show(game: &Game, mut settings: Settings) -> Outcome {

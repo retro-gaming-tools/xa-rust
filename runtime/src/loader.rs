@@ -54,7 +54,11 @@ fn programs_on_image(game: &Game, image: &std::path::Path) -> Vec<&'static [Modu
         let name = without_tag(program[0].file);
         let places: Vec<String> = std::iter::once(name.to_string()).chain(install_folders().iter().map(|folder| format!("{folder}/{name}"))).collect();
         let Some(entry) = places.iter().find_map(|place| files.iter().find(|entry| entry.path.eq_ignore_ascii_case(place))) else { return false };
-        disc.read(entry).is_ok_and(|data| Sha256::digest(&data).iter().map(|byte| format!("{byte:02x}")).collect::<String>() == program[0].sha256)
+        disc.read(entry).is_ok_and(|data| {
+            let found: String = Sha256::digest(&data).iter().map(|byte| format!("{byte:02x}")).collect();
+            log_hash(&format!("{} : {}", image.display(), entry.path), data.len(), &found);
+            found == program[0].sha256
+        })
     });
     found
 }
@@ -139,7 +143,22 @@ pub(crate) fn usable_renderer(game: &Game, folder: &str, chosen: usize) -> usize
 
 fn sha256_of(path: &std::path::Path) -> String {
     let file = std::fs::read(path).unwrap_or_default();
-    Sha256::digest(&file).iter().map(|byte| format!("{byte:02x}")).collect()
+    let found: String = Sha256::digest(&file).iter().map(|byte| format!("{byte:02x}")).collect();
+    log_hash(&path.display().to_string(), file.len(), &found);
+    found
+}
+
+/// Writes a checked file's hash to `recomp.log`, once per file and contents, so
+/// a player's log says which version they have even when it isn't a supported
+/// one. The supported versions' hashes are in the README.
+fn log_hash(place: &str, size: usize, found: &str) {
+    static LOGGED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let key = format!("{place} {found}");
+    let mut logged = LOGGED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !logged.contains(&key) {
+        crate::runlog::line(&format!("checked {place}: {size} bytes, sha256 {found}"));
+        logged.push(key);
+    }
 }
 
 /// Folders of an unpacked disc whose files the game's installer copied to the
@@ -255,6 +274,8 @@ pub(crate) fn default_folder(game: &Game) -> String {
     let program = std::env::current_exe().ok().and_then(|path| Some(path.parent()?.to_path_buf()));
     let mut places = vec![std::path::PathBuf::from("game")];
     places.extend(program.iter().map(|folder| folder.join("game")));
+    // With the XDG folders chosen, an unpacked disc is in the data folder.
+    places.extend(host::launcher::files_folder().map(|folder| folder.join("game")));
     places.push(std::path::PathBuf::from("."));
     places.extend(program);
     let firsts: Vec<&str> = programs(game).iter().map(|program| program[0].file).collect();
@@ -312,6 +333,7 @@ pub(crate) fn check_image(game: &Game, image: &std::path::Path) -> Result<(), St
             };
             let data = disc.read(entry).map_err(|_| "The disc image is damaged".to_string())?;
             let found: String = Sha256::digest(&data).iter().map(|byte| format!("{byte:02x}")).collect();
+            log_hash(&format!("{} : {}", image.display(), entry.path), data.len(), &found);
             if found != module.sha256 {
                 problem = "This disc is a different version".to_string();
                 continue 'programs;
@@ -326,7 +348,7 @@ pub(crate) fn check_image(game: &Game, image: &std::path::Path) -> Result<(), St
 /// beside the program, which is also where a start without any path looks
 /// first, or a folder named for the version when `game` holds something else.
 pub(crate) fn unpack_target(game: &Game, image: &std::path::Path) -> (std::path::PathBuf, bool) {
-    let base = host::launcher::program_folder().unwrap_or_default();
+    let base = host::launcher::files_folder().unwrap_or_default();
     target_for(&base, &programs_on_image(game, image))
 }
 
@@ -367,15 +389,47 @@ pub(crate) fn unpack_image(game: &Game, image: &std::path::Path, progress: &mut 
     Ok(target.display().to_string())
 }
 
+/// The drive behind a read-only folder that is a mounted CD or DVD, read like a disc image.
+pub(crate) fn disc_drive(folder: &std::path::Path) -> Option<std::path::PathBuf> {
+    (folder.is_dir() && !host::disc::is_writable(folder)).then(|| host::disc::drive_of(folder)).flatten()
+}
+
+/// A game folder that can't be written to, such as a mounted CD or DVD, is copied into
+/// `game` beside the program, since the game writes its saves and settings beside its
+/// files. Gives the folder to use: the copy, or `folder` itself when it's writable or
+/// doesn't hold the game.
+pub(crate) fn copy_read_only(game: &Game, folder: &str, progress: &mut dyn FnMut(u64, u64)) -> Result<String, String> {
+    let path = std::path::Path::new(folder);
+    if !path.is_dir() || check_files(game, folder).is_err() || host::disc::is_writable(path) {
+        return Ok(folder.to_string());
+    }
+    let target = host::launcher::files_folder().unwrap_or_default().join("game");
+    let copy = target.display().to_string();
+    if check_files(game, &copy).is_ok() {
+        return Ok(copy);
+    }
+    if target.exists() {
+        return Err(format!("{folder} can't be written to, and {copy} is in the way of a copy: it holds other files. Move or delete it."));
+    }
+    host::disc::copy_folder(path, &target, progress)?;
+    Ok(copy)
+}
+
 /// The folder the game runs in for what the player chose: that folder, or a
 /// disc image's unpacked copy. A folder that holds only an image stands for it.
 pub(crate) fn playable_folder(game: &Game, chosen: &str, progress: &mut dyn FnMut(u64, u64)) -> Result<String, String> {
     let mut place = std::path::PathBuf::from(chosen);
+    // A mounted CD or DVD whose game is somewhere on it stands for its drive.
+    if check_files(game, chosen).is_err() {
+        if let Some(drive) = disc_drive(&place).filter(|drive| check_image(game, drive).is_ok()) {
+            place = drive;
+        }
+    }
     if place.is_dir() && check_files(game, chosen).is_err() {
         place = host::disc::image_in(&place).unwrap_or(place);
     }
     if !host::disc::is_image(&place) {
-        return Ok(chosen.to_string());
+        return copy_read_only(game, chosen, progress);
     }
     unpack_image(game, &place, progress).map_err(|problem| {
         format!("{} can't use this disc image:\n{}\n\n{problem}\n\n{} needs {}.", game.title, place.display(), game.title, game.needs)
@@ -575,6 +629,8 @@ fn start(game: &'static Game, folder: String, switches: Vec<bool>, mods: Vec<boo
         if !arguments.is_empty() {
             println!("{program} {arguments}");
         }
+        // The program really started, which the renderer chose (XA.EXE or XA_3DFX.EXE).
+        crate::runlog::line(&format!("started: {program} {arguments}"));
         host::dos::start(&mut cpu, images[0].1.stack, &program, &arguments);
     }
     for (name, image) in images {
@@ -606,6 +662,10 @@ pub struct Settings {
     pub fullscreen: bool,
     /// Whether Glide is drawn by the processor instead of the graphics card.
     pub processor: bool,
+    /// Whether settings, `recomp.log` and unpacked discs go to the XDG folders (Linux).
+    pub xdg: bool,
+    /// Whether later starts go straight into the game, past the launcher.
+    pub skip_launcher: bool,
     /// One for each of the game's switches.
     pub switches: Vec<bool>,
     /// An index into the game's renderers.
@@ -658,6 +718,8 @@ fn settings_from_arguments(game: &Game, arguments: &[String]) -> Settings {
         scale: scale.unwrap_or(DEFAULT_SCALE).clamp(1, 6),
         fullscreen: has("--fullscreen"),
         processor: has("--drawing=processor"),
+        xdg: host::launcher::xdg_on(),
+        skip_launcher: false,
         switches: game.switches.iter().map(|(name, _, _)| has(name)).collect(),
         renderer: arguments.iter().find_map(|argument| find_choice(game.renderers, argument.strip_prefix("--renderer=")?)).unwrap_or(0),
         language: arguments.iter().find_map(|argument| find_choice(game.languages, argument.strip_prefix("--language=")?)).unwrap_or(0),
@@ -670,6 +732,7 @@ fn settings_from_arguments(game: &Game, arguments: &[String]) -> Settings {
 
 /// Runs the game on a thread with a host stack deep enough for its calls.
 pub fn run(game: &'static Game) {
+    host::launcher::choose_folders(game, &std::env::args().skip(1).collect::<Vec<String>>());
     crate::runlog::start(game.title, game.version, game.normal_exits, || host::launcher::settings_folder(game));
     report_crashes(game.title);
     let _ = INSTALL_FOLDERS.set(game.install);
@@ -684,6 +747,8 @@ pub fn run(game: &'static Game) {
     }
     choose_renderer(game, settings.renderer);
     host::launcher::snapshot(game, &settings);
+    // The port's keys as the player set them, with or without the launcher.
+    host::launcher::load_hotkeys(game);
     if host::launcher::wanted(&arguments) {
         // The launcher guesses no folder: it shows the one saved last time, or none to choose.
         if !arguments.iter().any(|argument| !argument.starts_with("--")) {
@@ -692,10 +757,14 @@ pub fn run(game: &'static Game) {
         // A player starts in fullscreen unless they chose a window before
         // (the saved setting wins) or asked for one with `--window`.
         settings.fullscreen = !arguments.iter().any(|argument| argument == "--window");
-        match host::launcher::show(game, settings) {
-            host::launcher::Outcome::Start(chosen) => settings = chosen,
-            host::launcher::Outcome::Quit => std::process::exit(0),
-            host::launcher::Outcome::Unavailable(unchanged) => settings = unchanged,
+        if host::launcher::skipped(game, &arguments, &mut settings) {
+            // Straight into the game with the saved settings.
+        } else {
+            match host::launcher::show(game, settings) {
+                host::launcher::Outcome::Start(chosen) => settings = chosen,
+                host::launcher::Outcome::Quit => std::process::exit(0),
+                host::launcher::Outcome::Unavailable(unchanged) => settings = unchanged,
+            }
         }
     }
     // The graphics code reads these when the game opens its window.

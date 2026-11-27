@@ -2,6 +2,17 @@
 
 Newest first. Each version has a tag `v<version>`, and `./changes.sh <old> <new>` shows the full diff between two of them.
 
+## 0.6-beta (2026-11-27)
+
+- The game can play from a real CD or DVD drive: choose the drive (or a file on the disc) as the game.
+- Disc images are recognised more reliably.
+- *Skip launcher next time*: a new launcher row that starts the game straight away from then on. `--launcher`, or Shift held while the port starts, brings the launcher back.
+- *Hotkeys...*: the port's own keys (fullscreen F11, frame counter F10) can be moved to other keys or turned off.
+- *Texture filtering* on the advanced page: anisotropic filtering for Glide on the graphics card, 16x by default, for sharper ground at steep angles.
+- The settings and the log are named after the program: `extreme-assault-rust.settings.ini` and `extreme-assault-rust.log`, so two ports in one folder keep their own. An existing `settings.ini` is still read.
+- The log records the command line and the SHA-256 value of each game program the port checked.
+- The README lists the programs' full SHA-256 values and how to check them, and says that the F keys the port keeps can't be used in the game.
+
 ## 0.56-beta (2026-11-22)
 
 - A chosen disc image starts its own version: the German disc could start an English game that was unpacked earlier. Each version keeps its own folder and saves.

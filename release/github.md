@@ -2,24 +2,24 @@ Extreme Assault Recompiled: Extreme Assault (Blue Byte, 1997) as a native Window
 
 **You need your own copy of Extreme Assault**: the English CD (E 1.1.0), the German CD (R 1.0.1), or a copy patched to 1.23. No game data is included.
 
-## Changes in 0.56-beta
+## Changes in 0.6-beta
 
-- A chosen disc image starts its own version: the German disc could start an English game that was unpacked earlier. Each version keeps its own folder and saves.
-- The launcher offers only the renderers the chosen disc has, and remembers the disc image's path.
-- A folder that holds only a disc image can be chosen as the game.
-- The software renderer works on a German copy with the 3Dfx patch. It stopped with error 71.
-- `recomp.log` beside the program records the launcher's steps, the game's output and any crash, to attach to an issue. A message names it when the game stops with an error. The run before's is kept as `recomp-previous.log`.
-- Fixed a memory bug that could cut data short when the game resized a block of memory.
-- The README lists the supported versions and known limits in the same form as the other ports, and says that the original programs are DOS programs.
-- The licence now excludes the translated game code in `programs/`. It named only `src/code/`, which this port doesn't use.
+- The game can play from a real CD or DVD drive: choose the drive (or a file on the disc) as the game.
+- Disc images are recognised more reliably.
+- *Skip launcher next time*: a new launcher row that starts the game straight away from then on. `--launcher`, or Shift held while the port starts, brings the launcher back.
+- *Hotkeys...*: the port's own keys (fullscreen F11, frame counter F10) can be moved to other keys or turned off.
+- *Texture filtering* on the advanced page: anisotropic filtering for Glide on the graphics card, 16x by default, for sharper ground at steep angles.
+- The settings and the log are named after the program: `extreme-assault-rust.settings.ini` and `extreme-assault-rust.log`, so two ports in one folder keep their own. An existing `settings.ini` is still read.
+- The log records the command line and the SHA-256 value of each game program the port checked.
+- The README lists the programs' full SHA-256 values and how to check them, and says that the F keys the port keeps can't be used in the game.
 
 The full history is in `CHANGELOG.md`.
 
 ## Downloads
 
-- `extreme-assault-rust-0.56-beta-windows-x64.zip`: unzip anywhere and start the program. Windows may warn that the program is from an unknown publisher, because it isn't code-signed: choose "More info", then "Run anyway".
-- `extreme-assault-rust-0.56-beta-linux-x64.AppImage`: make it executable and start it.
-- `extreme-assault-rust-0.56-beta-SHA256SUMS.txt`: checksums of both.
+- `extreme-assault-rust-0.6-beta-windows-x64.zip`: unzip anywhere and start the program. Windows may warn that the program is from an unknown publisher, because it isn't code-signed: choose "More info", then "Run anyway".
+- `extreme-assault-rust-0.6-beta-linux-x64.AppImage`: make it executable and start it.
+- `extreme-assault-rust-0.6-beta-SHA256SUMS.txt`: checksums of both.
 
 In the launcher, pick your disc image or game folder, or drop it onto the window.
 
@@ -30,7 +30,7 @@ In the launcher, pick your disc image or game folder, or drop it onto the window
 
 ## Status
 
-This is an early release. The German disc has no Glide program of its own: the launcher adds one from Blue Byte's German 3Dfx patch (1.10, `xa_r110.zip`, which you download yourself), on the row *Add the 3dfx patch*. If something doesn't work, please open an issue and attach `recomp.log` from beside the program.
+This is an early release. The German disc has no Glide program of its own: the launcher adds one from Blue Byte's German 3Dfx patch (1.10, `xa_r110.zip`, which you download yourself), on the row *Add the 3dfx patch*. If something doesn't work, please open an issue and attach `extreme-assault-rust.log` from beside the program.
 
 ## Checking these files
 

@@ -1,13 +1,18 @@
-//! `recomp.log`: what a run chose and printed, and how it ended, for a player to send.
-//! The program has no console on Windows, so this file is the only record of a run.
-//! It is written anew each run beside the program, or in the launcher's settings
-//! folder when the program's folder can't be written (an AppImage's is read-only).
+//! `<program>.log` (such as `extreme-assault-rust.log`): what a run chose and printed,
+//! and how it ended, for a player to send. The program has no console on Windows, so
+//! this file is the only record of a run. It is written anew each run beside the
+//! program, or in the launcher's settings folder when the program's folder can't be
+//! written (an AppImage's is read-only). Named after the program, so two ports in one
+//! folder keep their own logs.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-pub const FILE_NAME: &str = "recomp.log";
+/// `<program>.log`.
+pub fn file_name() -> String {
+    format!("{}.log", crate::host::launcher::program_name())
+}
 /// How many lines of the game's output the exit message shows.
 const TAIL_LINES: usize = 6;
 /// The output kept in memory for that message.
@@ -32,19 +37,22 @@ pub fn is_error(code: i32, normal: &[i32]) -> bool {
 }
 
 /// The log of the run before, kept when a new run starts, since a player who
-/// starts the game again after an error would otherwise lose the log to send.
-pub const PREVIOUS_FILE_NAME: &str = "recomp-previous.log";
+/// starts the game again after an error would otherwise lose the log to send:
+/// `<program>-previous.log`.
+pub fn previous_file_name() -> String {
+    format!("{}-previous.log", crate::host::launcher::program_name())
+}
 
 fn log() -> std::sync::MutexGuard<'static, Log> {
     LOG.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// The first of the folders where `recomp.log` can be created, and that file opened.
+/// The first of the folders where the log can be created, and that file opened.
 pub fn open_in(folders: &[PathBuf]) -> Option<(PathBuf, std::fs::File)> {
     folders.iter().find_map(|folder| {
-        let path = folder.join(FILE_NAME);
+        let path = folder.join(file_name());
         if path.is_file() {
-            let _ = std::fs::rename(&path, folder.join(PREVIOUS_FILE_NAME));
+            let _ = std::fs::rename(&path, folder.join(previous_file_name()));
         }
         std::fs::File::create(&path).ok().map(|file| (path, file))
     })
@@ -54,8 +62,9 @@ pub fn open_in(folders: &[PathBuf]) -> Option<(PathBuf, std::fs::File)> {
 pub fn start(title: &'static str, version: &str, normal_exits: &'static [i32], fallback: impl FnOnce() -> Option<PathBuf>) {
     let _ = TITLE.set(title);
     let _ = NORMAL_EXITS.set(normal_exits);
-    // Beside the `.AppImage`, as settings.ini is, not in its read-only mount.
-    let mut folders: Vec<PathBuf> = crate::host::launcher::program_folder().into_iter().collect();
+    // Beside the `.AppImage`, as the settings are, not in its read-only mount (or in the XDG
+    // data folder, when the player chose it).
+    let mut folders: Vec<PathBuf> = crate::host::launcher::files_folder().into_iter().collect();
     let opened = open_in(&folders).or_else(|| {
         folders = fallback().into_iter().collect();
         open_in(&folders)
@@ -126,10 +135,11 @@ pub fn exit_message(title: &str, code: i32, tail: &[String], log: Option<&Path>)
     }
     match log {
         Some(path) => text.push_str(&format!(
-            "\n\nPlease send this file with your report:\n{}\n(Starting the game again keeps it as {PREVIOUS_FILE_NAME}.)",
-            path.display()
+            "\n\nPlease send this file with your report:\n{}\n(Starting the game again keeps it as {}.)",
+            path.display(),
+            previous_file_name()
         )),
-        None => text.push_str("\n\nThe log recomp.log couldn't be written."),
+        None => text.push_str(&format!("\n\nThe log {} couldn't be written.", file_name())),
     }
     text
 }
@@ -167,11 +177,11 @@ mod tests {
         std::fs::create_dir_all(&writable).unwrap();
         let missing = base.join("no-such-folder");
         let (path, _) = open_in(&[missing.clone(), writable.clone()]).unwrap();
-        assert_eq!(path, writable.join(FILE_NAME));
+        assert_eq!(path, writable.join(file_name()));
         // A second run keeps the first one's log as the previous log.
         std::fs::write(&path, "first run").unwrap();
         open_in(&[missing, writable.clone()]).unwrap();
-        assert_eq!(std::fs::read_to_string(writable.join(PREVIOUS_FILE_NAME)).unwrap(), "first run");
+        assert_eq!(std::fs::read_to_string(writable.join(previous_file_name())).unwrap(), "first run");
         assert!(open_in(&[base.join("also-missing")]).is_none());
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -197,7 +207,7 @@ mod tests {
         assert!(text.starts_with("Extreme Assault stopped with error code 71."));
         assert!(text.contains("INIT:: error parsing"));
         assert!(text.contains("/x/recomp.log\n"));
-        assert!(text.contains(PREVIOUS_FILE_NAME));
+        assert!(text.contains(&previous_file_name()));
         assert!(exit_message("X", 1, &[], None).contains("couldn't be written"));
     }
 }

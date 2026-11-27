@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "extreme-assault-rust"
-version = "0.56.0-beta"
+version = "0.6.0-beta"
 dependencies = [
  "extreme-assault-code-xa",
  "extreme-assault-code-xa_1_1",
@@ -149,11 +149,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "recomp-disc"
+version = "0.1.0"
+
+[[package]]
 name = "recomp-runtime"
 version = "0.1.0"
 dependencies = [
  "lewton",
  "libc",
+ "recomp-disc",
  "rustysynth",
  "sha2",
 ]
